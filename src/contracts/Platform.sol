@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {SafeERC20, IERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import {Ownable2Step, Ownable} from '@openzeppelin/contracts/access/Ownable2Step.sol';
+import {Ownable, Ownable2Step} from '@openzeppelin/contracts/access/Ownable2Step.sol';
+import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {IPlatform} from 'interfaces/IPlatform.sol';
 
 contract Platform is IPlatform, Ownable2Step {
@@ -30,7 +30,7 @@ contract Platform is IPlatform, Ownable2Step {
     address __natilleraImpl,
     address __tokenizacionImpl,
     PlatformParams memory _params
-    ) Ownable(_initialOwner) {
+  ) Ownable(_initialOwner) {
     _platformParams = _params;
     _setImplementation(__natilleraImpl, 'v1.0.0', 'NATILLERA');
     _setImplementation(__tokenizacionImpl, 'v1.0.0', 'TOKENIZACION');

@@ -3,6 +3,4 @@ pragma solidity 0.8.30;
 
 import {Script} from 'forge-std/Script.sol';
 
-contract Deploy is Script {
-
-}
+contract Deploy is Script {}

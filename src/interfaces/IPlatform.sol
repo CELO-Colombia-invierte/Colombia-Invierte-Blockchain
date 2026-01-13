@@ -144,12 +144,11 @@ interface IPlatform {
   function tokens() external view returns (address[] memory _tokens);
 
   /**
-   * @notice Returns the balance of the treasury for a token 
+   * @notice Returns the balance of the treasury for a token
    * @param _token The token to get the balance of
    * @return _balance The balance of the token
    */
   function getBalancePorToken(address _token) external view returns (uint256 _balance);
-
 
   /*///////////////////////////////////////////////////////////////
                             LOGIC FUNCTIONS
@@ -177,9 +176,9 @@ interface IPlatform {
   function withdrawFeesPorToken(address _token) external;
 
   /**
-  * @notice Withdraws all fees
-  * @dev onlyOwner access control
-  */
+   * @notice Withdraws all fees
+   * @dev onlyOwner access control
+   */
   function withdrawFees() external;
 
   /**
