@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {IERC20} from 'forge-std/interfaces/IERC20.sol';
-
 /**
  * @title Platform Contract
  * @author K-Labs
@@ -13,14 +11,14 @@ interface IPlatform {
                             DATA STRUCTS
   //////////////////////////////////////////////////////////////*/
   /**
-   * @notice Parameters of the contract
+   * @notice PlatformParams of the contract
    * @param feeDeNatillera The deployment fee for the natillera
    * @param feeDeTokenizacion The deployment fee for the tokenizacion
    * @param feeDeWithdrawal The withdrawal fee
    * @param delayDeGobierno The delay for the governance execution
    * @param quorumMinimo The minimum quorum for the governance
    */
-  struct Parameters {
+  struct PlatformParams {
     uint256 feeDeNatillera;
     uint256 feeDeTokenizacion;
     uint256 feeDeWithdrawal;
@@ -29,7 +27,17 @@ interface IPlatform {
   }
 
   /**
-   * @notice Natillera struct
+   * @notice Implementation struct
+   * @param implementation The address of the implementation
+   * @param version The version of the implementation
+   */
+  struct Implementation {
+    address implementation;
+    bytes32 version;
+  }
+
+  /**
+   * @notice NatilleraParams struct
    * @param id The id of the natillera
    * @param feeDeWithdrawal The withdrawal fee
    * @param delayDeGobierno The delay for the governance execution
@@ -38,7 +46,7 @@ interface IPlatform {
    * @param cantidadDeMeses The number of months of the contribution period
    * @param fechaMaximaDePago The maximum date of the contribution period every month
    */
-  struct Natillera {
+  struct NatilleraParams {
     uint256 id;
     uint256 feeDeWithdrawal;
     uint256 delayDeGobierno;
@@ -46,19 +54,21 @@ interface IPlatform {
     uint256 cuotaPorMes;
     uint256 cantidadDeMeses;
     uint256 fechaMaximaDePago;
+    bytes32 version;
   }
 
   /**
-   * @notice Tokenizacion struct
+   * @notice TokenizacionParams struct
    * @param id The id of the tokenizacion
    * @param delayDeGobierno The delay for the governance execution
    * @param quorumMinimo The minimum quorum for the governance
    */
-  struct Tokenizacion {
+  struct TokenizacionParams {
     uint256 id;
     uint256 delayDeGobierno;
     uint256 quorumMinimo;
     // TODO: Finalizar struct
+    bytes32 version;
   }
 
   /*///////////////////////////////////////////////////////////////
@@ -92,6 +102,8 @@ interface IPlatform {
   error Platform_InvalidParameter();
   /// @notice Error emitted when the token is invalid
   error Platform_InvalidToken();
+  /// @notice Error emitted when the balance is zero
+  error Platform_BalanceZero();
   /// @notice Error emitted when the deployment failed
   error Platform_DeploymentFailed();
 
@@ -99,16 +111,10 @@ interface IPlatform {
                             VIEW FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
-   * @notice Returns the owner of the contract
-   * @return _owner The owner of the contract
-   */
-  function OWNER() external view returns (address _owner); // todo: replace with ownable
-
-  /**
    * @notice Returns the parameters of the contract
    * @return _parameters The parameters of the contract
    */
-  function parameters() external view returns (Parameters _parameters);
+  function parameters() external view returns (PlatformParams memory _parameters);
 
   /**
    * @notice Checks if a token is allowed
@@ -129,7 +135,21 @@ interface IPlatform {
    * @param _usuario The usuario to get the ids of
    * @return _ids The ids of the usuario
    */
-  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] _ids);
+  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids);
+
+  /**
+   * @notice Returns the tokens
+   * @return _tokens The tokens
+   */
+  function tokens() external view returns (address[] memory _tokens);
+
+  /**
+   * @notice Returns the balance of the treasury for a token 
+   * @param _token The token to get the balance of
+   * @return _balance The balance of the token
+   */
+  function getBalancePorToken(address _token) external view returns (uint256 _balance);
+
 
   /*///////////////////////////////////////////////////////////////
                             LOGIC FUNCTIONS
@@ -138,29 +158,29 @@ interface IPlatform {
    * @notice Deploys a new natillera
    * @param _config The configuration of the natillera
    */
-  function deployNatillera(Natillera memory _config) external;
+  function deployNatillera(NatilleraParams memory _config) external;
 
   /**
    * @notice Deploys a new tokenizacion
    * @param _config The configuration of the tokenizacion
    */
-  function deployTokenizacion(Tokenizacion memory _config) external;
+  function deployTokenizacion(TokenizacionParams memory _config) external;
 
   /*///////////////////////////////////////////////////////////////
                             ACCESS CONTROL FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
-   * @notice Withdraws a specific amount of fees
+   * @notice Withdraws the fees for a specific token
    * @dev onlyOwner access control
-   * @param _cantidad The amount of fees to withdraw
+   * @param _token The token to withdraw the fees from
    */
-  function withdrawFees(uint256 _cantidad) external;
+  function withdrawFeesPorToken(address _token) external;
 
   /**
   * @notice Withdraws all fees
   * @dev onlyOwner access control
   */
-  function withdrawTodoDeFees() external;
+  function withdrawFees() external;
 
   /**
    * @notice Updates the status of a token
@@ -176,4 +196,13 @@ interface IPlatform {
    * @param _value The value to be set (e.g. 3000 for 3.0% fee)
    */
   function updateParameters(bytes32 _parameter, uint256 _value) external;
+
+  /**
+   * @notice Updates the implementation of the contract
+   * @dev onlyOwner access control
+   * @param _implementation The implementation to be updated
+   * @param _version The version of the implementation
+   * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
+   */
+  function updateImplementation(address _implementation, bytes32 _version, bytes32 _type) external;
 }
