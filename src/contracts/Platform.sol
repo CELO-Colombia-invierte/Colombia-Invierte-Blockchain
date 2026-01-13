@@ -114,24 +114,6 @@ contract Platform is IPlatform, Ownable2Step {
   /// --- INTERNAL FUNCTIONS ---
 
   /**
-   * @notice Gets the balance of a token
-   * @param _token The token to get the balance of
-   * @return _balance The balance of the token
-   */
-  function _getBalancePorToken(address _token) internal view returns (uint256 _balance) {
-    _balance = IERC20(_token).balanceOf(address(this));
-  }
-
-  /**
-   * @notice Checks if the balance of a token is greater than zero
-   * @param _token The token to check the balance of
-   * @return _isGTZero True if the balance is greater than zero, false otherwise
-   */
-  function _balanceGTZero(address _token) internal view returns (bool _isGTZero) {
-    _isGTZero = _getBalancePorToken(_token) > 0;
-  }
-
-  /**
    * @notice Withdraws the fees for a specific token
    * @param _token The token to withdraw the fees from
    */
@@ -150,5 +132,23 @@ contract Platform is IPlatform, Ownable2Step {
     if (_type == 'NATILLERA') _natilleraImpl = Implementation(_implementation, _version);
     else if (_type == 'TOKENIZACION') _tokenizacionImpl = Implementation(_implementation, _version);
     else revert Platform_InvalidParameter();
+  }
+
+  /**
+   * @notice Gets the balance of a token
+   * @param _token The token to get the balance of
+   * @return _balance The balance of the token
+   */
+  function _getBalancePorToken(address _token) internal view returns (uint256 _balance) {
+    _balance = IERC20(_token).balanceOf(address(this));
+  }
+
+  /**
+   * @notice Checks if the balance of a token is greater than zero
+   * @param _token The token to check the balance of
+   * @return _isGTZero True if the balance is greater than zero, false otherwise
+   */
+  function _balanceGTZero(address _token) internal view returns (bool _isGTZero) {
+    _isGTZero = _getBalancePorToken(_token) > 0;
   }
 }

@@ -108,49 +108,6 @@ interface IPlatform {
   error Platform_DeploymentFailed();
 
   /*///////////////////////////////////////////////////////////////
-                            VIEW FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Returns the parameters of the contract
-   * @return _parameters The parameters of the contract
-   */
-  function parameters() external view returns (PlatformParams memory _parameters);
-
-  /**
-   * @notice Checks if a token is allowed
-   * @param _token The token to check the status of
-   * @return _allowed True if the token is allowed, false otherwise
-   */
-  function tokenStatus(address _token) external view returns (bool _allowed);
-
-  /**
-   * @notice Returns the proyecto by id
-   * @param _id The id of the proyecto
-   * @return _proyecto The address of the proyecto
-   */
-  function proyectoPorId(uint256 _id) external view returns (address _proyecto);
-
-  /**
-   * @notice Returns the ids by usuario
-   * @param _usuario The usuario to get the ids of
-   * @return _ids The ids of the usuario
-   */
-  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids);
-
-  /**
-   * @notice Returns the tokens
-   * @return _tokens The tokens
-   */
-  function tokens() external view returns (address[] memory _tokens);
-
-  /**
-   * @notice Returns the balance of the treasury for a token
-   * @param _token The token to get the balance of
-   * @return _balance The balance of the token
-   */
-  function getBalancePorToken(address _token) external view returns (uint256 _balance);
-
-  /*///////////////////////////////////////////////////////////////
                             LOGIC FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
@@ -204,4 +161,47 @@ interface IPlatform {
    * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
    */
   function updateImplementation(address _implementation, bytes32 _version, bytes32 _type) external;
+
+  /*///////////////////////////////////////////////////////////////
+                            VIEW FUNCTIONS
+  //////////////////////////////////////////////////////////////*/
+  /**
+   * @notice Returns the parameters of the contract
+   * @return _parameters The parameters of the contract
+   */
+  function parameters() external view returns (PlatformParams memory _parameters);
+
+  /**
+   * @notice Checks if a token is allowed
+   * @param _token The token to check the status of
+   * @return _allowed True if the token is allowed, false otherwise
+   */
+  function tokenStatus(address _token) external view returns (bool _allowed);
+
+  /**
+   * @notice Returns the proyecto by id
+   * @param _id The id of the proyecto
+   * @return _proyecto The address of the proyecto
+   */
+  function proyectoPorId(uint256 _id) external view returns (address _proyecto);
+
+  /**
+   * @notice Returns the ids by usuario
+   * @param _usuario The usuario to get the ids of
+   * @return _ids The ids of the usuario
+   */
+  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids);
+
+  /**
+   * @notice Returns the tokens
+   * @return _tokens The tokens
+   */
+  function tokens() external view returns (address[] memory _tokens);
+
+  /**
+   * @notice Returns the balance of the treasury for a token
+   * @param _token The token to get the balance of
+   * @return _balance The balance of the token
+   */
+  function getBalancePorToken(address _token) external view returns (uint256 _balance);
 }
