@@ -12,87 +12,84 @@ interface IPlatform {
   //////////////////////////////////////////////////////////////*/
   /**
    * @notice PlatformParams of the contract
-   * @param feeDeNatillera The deployment fee for the natillera
-   * @param feeDeTokenizacion The deployment fee for the tokenizacion
-   * @param feeDeWithdrawal The withdrawal fee
-   * @param delayDeGobierno The delay for the governance execution
+   * @param feeDeNatillera The deployment fee for the natillera: flat fee in native token
+   * @param feeDeTokenizacion The deployment fee for the tokenizacion: percentage fee of value of the tokenization
+   * @param feeDeWithdrawal The withdrawal fee: percentage fee of the withdrawal amount
+   * @param delayMinimo The minimum delay for the governance execution
    * @param quorumMinimo The minimum quorum for the governance
    */
   struct PlatformParams {
     uint256 feeDeNatillera;
     uint256 feeDeTokenizacion;
     uint256 feeDeWithdrawal;
+    uint256 delayMinimo;
+    uint256 quorumMinimo;
+  }
+
+  /**
+   * @notice GovernanceConfig struct for clone deployments
+   * @param delayDeGobierno The delay for the governance execution
+   * @param quorumMinimo The minimum quorum for the governance
+   */
+  struct GovernanceConfig {
     uint256 delayDeGobierno;
     uint256 quorumMinimo;
   }
 
   /**
-   * @notice Implementation struct
-   * @param implementation The address of the implementation
-   * @param version The version of the implementation
-   */
-  struct Implementation {
-    address implementation;
-    bytes32 version;
-  }
-
-  /**
-   * @notice NatilleraParams struct
-   * @param id The id of the natillera
-   * @param feeDeWithdrawal The withdrawal fee
-   * @param delayDeGobierno The delay for the governance execution
-   * @param quorumMinimo The minimum quorum for the governance
+   * @notice NatilleraConfig struct set by the creator of the natillera
+   * @param token The token of the natillera (if native token, address(0))
    * @param cuotaPorMes The monthly contribution per month per member
    * @param cantidadDeMeses The number of months of the contribution period
    * @param fechaMaximaDePago The maximum date of the contribution period every month
+   * @param governanceConfig The governance configuration for the natillera
    */
-  struct NatilleraParams {
-    uint256 id;
-    uint256 feeDeWithdrawal;
-    uint256 delayDeGobierno;
-    uint256 quorumMinimo;
+  struct NatilleraConfig {
+    address token;
     uint256 cuotaPorMes;
     uint256 cantidadDeMeses;
     uint256 fechaMaximaDePago;
-    bytes32 version;
   }
 
   /**
    * @notice TokenizacionParams struct
-   * @param id The id of the tokenizacion
-   * @param delayDeGobierno The delay for the governance execution
-   * @param quorumMinimo The minimum quorum for the governance
+   * @param placeholder Placeholder for the tokenization parameters
    */
   struct TokenizacionParams {
-    uint256 id;
-    uint256 delayDeGobierno;
-    uint256 quorumMinimo;
     // TODO: Finalizar struct
-    bytes32 version;
+    uint256 placeholder;
   }
 
   /*///////////////////////////////////////////////////////////////
                             EVENTS
   //////////////////////////////////////////////////////////////*/
+  /**
+   * @notice Event emitted when the natillera is deployed
+   * @param _natillera The address of the deployed natillera
+   * @param _id The id of the natillera
+   */
+  event DeployNatillera(address indexed _natillera, uint256 indexed _id);
 
-  /// @notice Event emitted when the natillera is deployed
-  event DeployNatillera();
-  /// @notice Event emitted when the tokenizacion is deployed
-  event DeployTokenizacion();
+  /**
+   * @notice Event emitted when the tokenizacion is deployed
+   * @param _tokenizacion The address of the deployed tokenizacion
+   * @param _id The id of the tokenizacion
+   */
+  event DeployTokenizacion(address indexed _tokenizacion, uint256 indexed _id);
 
   /**
    * @notice Event emitted when a token is allowed or disallowed
    * @param _token The token that was allowed or disallowed
    * @param _allowed True if the token is allowed, false otherwise
    */
-  event UpdateToken(address _token, bool _allowed);
+  event UpdateToken(address indexed _token, bool indexed _allowed);
 
   /**
    * @notice Event emitted when the parameters are set
    * @param _parameter The parameter that was set
    * @param _value The value that was set
    */
-  event ParametersSet(bytes32 _parameter, uint256 _value);
+  event ParametersSet(bytes32 indexed _parameter, uint256 indexed _value);
 
   /*///////////////////////////////////////////////////////////////
                             ERRORS
@@ -104,67 +101,102 @@ interface IPlatform {
   error Platform_InvalidToken();
   /// @notice Error emitted when the balance is zero
   error Platform_BalanceZero();
-  /// @notice Error emitted when the deployment failed
-  error Platform_DeploymentFailed();
+  /// @notice Error emitted when the deployment fee is insufficient
+  error Platform_InsufficientFee();
+  /// @notice Error emitted when the token is already registered
+  error Platform_RegistryError();
 
   /*///////////////////////////////////////////////////////////////
                             LOGIC FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
    * @notice Deploys a new natillera
-   * @param _config The configuration of the natillera
+   * @param _natConfig The configuration of the natillera
+   * @param _govConfig The governance configuration
    */
-  function deployNatillera(NatilleraParams memory _config) external;
+  function deployNatillera(NatilleraConfig memory _natConfig, GovernanceConfig memory _govConfig) external payable;
 
   /**
    * @notice Deploys a new tokenizacion
-   * @param _config The configuration of the tokenizacion
+   * @param _tokenConfig The configuration of the tokenizacion
+   * @param _govConfig The governance configuration
    */
-  function deployTokenizacion(TokenizacionParams memory _config) external;
+  function deployTokenizacion(TokenizacionParams memory _tokenConfig, GovernanceConfig memory _govConfig) external;
 
   /*///////////////////////////////////////////////////////////////
                             ACCESS CONTROL FUNCTIONS
   //////////////////////////////////////////////////////////////*/
+
   /**
-   * @notice Withdraws the fees for a specific token
-   * @dev onlyOwner access control
-   * @param _token The token to withdraw the fees from
+   * @notice Withdraws the native fees
    */
-  function withdrawFeesPorToken(address _token) external;
+  function withdrawNativeFees() external;
 
   /**
    * @notice Withdraws all fees
-   * @dev onlyOwner access control
    */
-  function withdrawFees() external;
+  function withdrawERC20Fees() external;
 
   /**
-   * @notice Updates the status of a token
-   * @dev onlyOwner access control
-   * @param _token The token to be updated: true if allowed, false if disallowed
+   * @notice Withdraws the fees for a specific token
+   * @param _token The token to withdraw the fees from
    */
-  function updateToken(address _token, bool _allowed) external;
+  function withdrawERC20FeesPorToken(address _token) external;
+
+  /**
+   * @notice Add a token to the registry
+   * @param _token The token to add to the registry
+   */
+  function addToken(address _token) external;
+
+  /**
+   * @notice Remove a token from the registry
+   * @param _token The token to remove from the registry
+   */
+  function removeToken(address _token) external;
 
   /**
    * @notice Updates the parameters of the contract
-   * @dev onlyOwner access control
    * @param _parameter The parameter to be updated (e.g. 'FEE_DE_NATILLERA')
    * @param _value The value to be set (e.g. 3000 for 3.0% fee)
    */
-  function updateParameters(bytes32 _parameter, uint256 _value) external;
+  function updateParameter(bytes32 _parameter, uint256 _value) external;
 
   /**
    * @notice Updates the implementation of the contract
-   * @dev onlyOwner access control
    * @param _implementation The implementation to be updated
-   * @param _version The version of the implementation
    * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
    */
-  function updateImplementation(address _implementation, bytes32 _version, bytes32 _type) external;
+  function updateImplementation(address _implementation, bytes32 _type) external;
 
   /*///////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
   //////////////////////////////////////////////////////////////*/
+
+  /**
+   * @notice Returns the implementation of the natillera
+   * @return _implementation The current implementation address of the natillera
+   */
+  function natilleraImpl() external view returns (address _implementation);
+
+  /**
+   * @notice Returns the version of the natillera implementation
+   * @return _version The current version of the natillera implementation
+   */
+  function natilleraVersion() external view returns (uint256 _version);
+
+  /**
+   * @notice Returns the implementation of the tokenizacion
+   * @return _implementation The current implementation address of the tokenizacion
+   */
+  function tokenizacionImpl() external view returns (address _implementation);
+
+  /**
+   * @notice Returns the version of the tokenizacion implementation
+   * @return _version The current version of the tokenizacion implementation
+   */
+  function tokenizacionVersion() external view returns (uint256 _version);
+
   /**
    * @notice Returns the parameters of the contract
    * @return _parameters The parameters of the contract
