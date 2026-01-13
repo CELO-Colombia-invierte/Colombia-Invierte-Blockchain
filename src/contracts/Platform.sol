@@ -44,11 +44,6 @@ contract Platform is IPlatform, Ownable2Step {
     _;
   }
 
-  modifier verifyToken(address _token) {
-    if (!_tokenExists(_token)) revert Platform_InvalidToken();
-    _;
-  }
-
   /**
    * @notice Constructor of the contract
    * @param _initialOwner The initial owner of the contract
@@ -123,7 +118,8 @@ contract Platform is IPlatform, Ownable2Step {
   }
 
   /// @inheritdoc IPlatform
-  function addToken(address _token) external onlyOwner verifyToken(_token) {
+  function addToken(address _token) external onlyOwner {
+    if (IERC20(_token).totalSupply() == 0) revert Platform_InvalidToken();
     if (tokenStatus[_token]) revert Platform_RegistryError();
     tokenStatus[_token] = true;
     _registeredTokens.push(_token);
@@ -131,7 +127,7 @@ contract Platform is IPlatform, Ownable2Step {
   }
 
   /// @inheritdoc IPlatform
-  function removeToken(address _token) external onlyOwner verifyToken(_token) {
+  function removeToken(address _token) external onlyOwner {
     if (!tokenStatus[_token]) revert Platform_RegistryError();
     tokenStatus[_token] = false;
     _removeTokenFromRegistry(_token);
@@ -216,15 +212,6 @@ contract Platform is IPlatform, Ownable2Step {
         break;
       }
     }
-  }
-
-  /**
-   * @notice Checks if a token exists
-   * @param _token The token to check the existence of
-   * @return _exists True if the token exists, false otherwise
-   */
-  function _tokenExists(address _token) internal view returns (bool _exists) {
-    _exists = IERC20(_token).totalSupply() > 0;
   }
 
   /**

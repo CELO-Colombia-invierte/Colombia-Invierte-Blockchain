@@ -126,7 +126,6 @@ interface IPlatform {
   /*///////////////////////////////////////////////////////////////
                             ACCESS CONTROL FUNCTIONS
   //////////////////////////////////////////////////////////////*/
-
   /**
    * @notice Withdraws the native fees
    */
@@ -172,7 +171,6 @@ interface IPlatform {
   /*///////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
   //////////////////////////////////////////////////////////////*/
-
   /**
    * @notice Returns the implementation of the natillera
    * @return _implementation The current implementation address of the natillera
