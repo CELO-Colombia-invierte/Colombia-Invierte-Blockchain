@@ -5,6 +5,8 @@ import {Ownable, Ownable2Step} from '@openzeppelin/contracts/access/Ownable2Step
 import {Clones} from '@openzeppelin/contracts/proxy/Clones.sol';
 import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 import {IPlatform} from 'interfaces/IPlatform.sol';
+import {INatillera} from 'interfaces/INatillera.sol';
+import {ITokenizacion} from 'interfaces/ITokenizacion.sol';
 
 contract Platform is IPlatform, Ownable2Step {
   using SafeERC20 for IERC20;
@@ -22,11 +24,13 @@ contract Platform is IPlatform, Ownable2Step {
   mapping(address _token => bool _allowed) public tokenStatus;
   /// @inheritdoc IPlatform
   mapping(uint256 _id => address _proyecto) public proyectoPorId;
+  /// @inheritdoc IPlatform
+  mapping(address _wallet => bytes32 _usuario) public walletDeUsuario;
   /// @notice Mapping of user to their project IDs
   mapping(bytes32 _usuario => uint256[] _ids) internal _idsPorUsuario;
 
   /// @notice The unique project identifier
-  uint256 internal _uid;
+  uint256 internal _uuid;
 
   /// @notice The parameters of the platform
   PlatformParams internal _pps;
@@ -68,28 +72,31 @@ contract Platform is IPlatform, Ownable2Step {
 
   /// @inheritdoc IPlatform
   function deployNatillera(
-    NatilleraConfig memory _config,
-    GovernanceConfig memory _govConfig
+    uint256 _comienzo,
+    INatillera.NatilleraConfig calldata _implConfig,
+    GovernanceConfig calldata _govConfig
   ) external payable verifyConfig(_govConfig) {
     if (msg.value < _pps.feeDeNatillera) revert Platform_InsufficientFee();
-    ++_uid;
+
     address clone = Clones.clone(natilleraImpl);
-    // INatillera(clone).initialize(_config, _govConfig, _uid, msg.sender, address(this));
-    proyectoPorId[_uid] = clone;
-    emit DeployNatillera(clone, _uid);
+    INatillera(clone).initialize(_comienzo, _implConfig, _govConfig, _getProjectConfig(msg.sender));
+
+    proyectoPorId[_uuid] = clone;
+    emit DeployNatillera(clone, _uuid);
   }
 
   /// @inheritdoc IPlatform
   function deployTokenizacion(
-    TokenizacionParams memory _config,
-    GovernanceConfig memory _govConfig
+    ITokenizacion.TokenizacionParams calldata _implConfig,
+    GovernanceConfig calldata _govConfig
   ) external verifyConfig(_govConfig) {
     // TODO: implement percentage fee for the tokenization
-    ++_uid;
+
     address clone = Clones.clone(tokenizacionImpl);
-    // ITokenizacion(clone).initialize(_config, _govConfig, _uid, msg.sender, address(this));
-    proyectoPorId[_uid] = clone;
-    emit DeployTokenizacion(clone, _uid);
+    ITokenizacion(clone).initialize(_implConfig, _govConfig, _getProjectConfig(msg.sender));
+
+    proyectoPorId[_uuid] = clone;
+    emit DeployTokenizacion(clone, _uuid);
   }
 
   /// --- ACCESS CONTROL FUNCTIONS ---
@@ -212,6 +219,20 @@ contract Platform is IPlatform, Ownable2Step {
         break;
       }
     }
+  }
+
+  /**
+   * @notice Gets the project configuration
+   * @param _creator The creator of the project
+   * @return _projectConfig The project configuration
+   */
+  function _getProjectConfig(address _creator) internal returns (ProjectConfig memory _projectConfig) {
+    ++_uuid;
+    _projectConfig = ProjectConfig({
+      uuid: _uuid,
+      creator: _creator,
+      platform: address(this)
+    });
   }
 
   /**

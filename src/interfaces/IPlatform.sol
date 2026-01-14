@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {INatillera} from 'interfaces/INatillera.sol';
+
 /**
  * @title Platform Contract
  * @author K-Labs
@@ -37,28 +39,17 @@ interface IPlatform {
   }
 
   /**
-   * @notice NatilleraConfig struct set by the creator of the natillera
-   * @param token The token of the natillera (if native token, address(0))
-   * @param cuotaPorMes The monthly contribution per month per member
-   * @param cantidadDeMeses The number of months of the contribution period
-   * @param fechaMaximaDePago The maximum date of the contribution period every month
-   * @param governanceConfig The governance configuration for the natillera
+   * @notice ProjectConfig struct for project deployment
+   * @param uuid The uuid of the project
+   * @param creator The creator of the project
+   * @param platform The platform of the project
    */
-  struct NatilleraConfig {
-    address token;
-    uint256 cuotaPorMes;
-    uint256 cantidadDeMeses;
-    uint256 fechaMaximaDePago;
+  struct ProjectConfig {
+    uint256 uuid;
+    address creator;
+    address platform;
   }
 
-  /**
-   * @notice TokenizacionParams struct
-   * @param placeholder Placeholder for the tokenization parameters
-   */
-  struct TokenizacionParams {
-    // TODO: Finalizar struct
-    uint256 placeholder;
-  }
 
   /*///////////////////////////////////////////////////////////////
                             EVENTS
@@ -114,7 +105,7 @@ interface IPlatform {
    * @param _natConfig The configuration of the natillera
    * @param _govConfig The governance configuration
    */
-  function deployNatillera(NatilleraConfig memory _natConfig, GovernanceConfig memory _govConfig) external payable;
+  function deployNatillera(INatillera.NatilleraConfig memory _natConfig, GovernanceConfig memory _govConfig) external payable;
 
   /**
    * @notice Deploys a new tokenizacion
@@ -216,8 +207,15 @@ interface IPlatform {
   function proyectoPorId(uint256 _id) external view returns (address _proyecto);
 
   /**
+   * @notice Returns the usuario by wallet
+   * @param _wallet The wallet to get the usuario of
+   * @return _usuario The usuario of the wallet (usuario = keccak256 hash of the user email)
+   */
+  function walletDeUsuario(address _wallet) external view returns (bytes32 _usuario);
+
+  /**
    * @notice Returns the ids by usuario
-   * @param _usuario The usuario to get the ids of
+   * @param _usuario The usuario to get the ids of (usuario = keccak256 hash of the user email)
    * @return _ids The ids of the usuario
    */
   function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids);
