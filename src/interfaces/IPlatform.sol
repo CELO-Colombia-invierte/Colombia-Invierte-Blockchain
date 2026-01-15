@@ -51,6 +51,11 @@ interface IPlatform {
     address platform;
   }
 
+  /**
+   * @notice Usuario struct for user info
+   * @param emailHash The email hash of the user
+   * @param projects The projects of the user
+   */
   struct Usuario {
     bytes32 emailHash;
     uint256[] projects;

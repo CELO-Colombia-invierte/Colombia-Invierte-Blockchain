@@ -62,7 +62,8 @@ contract Natillera is Initializable, Tracking, OwnableUpgradeable, INatillera {
 
   /// @inheritdoc INatillera
   function trackContribution(address _member)
-    external sync
+    external
+    sync
     returns (uint256 _amountPaid, uint256 _amountDue, uint256 _missedCycles)
   {
     (_amountPaid, _amountDue, _missedCycles) = _trackContribution(_member);
