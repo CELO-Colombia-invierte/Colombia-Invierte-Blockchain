@@ -30,7 +30,11 @@ interface ITokenizacion is ITracking {
    * @param _govConfig The governance configuration for the tokenizacion
    * @param _projectConfig The project configuration for the tokenizacion
    */
-  function initialize(TokenizacionParams calldata _config, IPlatform.GovernanceConfig calldata _govConfig, IPlatform.ProjectConfig calldata _projectConfig) external;
+  function initialize(
+    TokenizacionParams calldata _config,
+    IPlatform.GovernanceConfig calldata _govConfig,
+    IPlatform.ProjectConfig calldata _projectConfig
+  ) external;
 
   /*///////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS

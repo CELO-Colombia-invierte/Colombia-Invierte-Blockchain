@@ -4,8 +4,9 @@ pragma solidity 0.8.30;
 import {Ownable, Ownable2Step} from '@openzeppelin/contracts/access/Ownable2Step.sol';
 import {Clones} from '@openzeppelin/contracts/proxy/Clones.sol';
 import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
-import {IPlatform} from 'interfaces/IPlatform.sol';
+
 import {INatillera} from 'interfaces/INatillera.sol';
+import {IPlatform} from 'interfaces/IPlatform.sol';
 import {ITokenizacion} from 'interfaces/ITokenizacion.sol';
 
 contract Platform is IPlatform, Ownable2Step {
@@ -24,10 +25,8 @@ contract Platform is IPlatform, Ownable2Step {
   mapping(address _token => bool _allowed) public tokenStatus;
   /// @inheritdoc IPlatform
   mapping(uint256 _id => address _proyecto) public proyectoPorId;
-  /// @inheritdoc IPlatform
-  mapping(address _wallet => bytes32 _usuario) public walletDeUsuario;
-  /// @notice Mapping of user to their project IDs
-  mapping(bytes32 _usuario => uint256[] _ids) internal _idsPorUsuario;
+  /// @notice Mapping of wallet to user info
+  mapping(address _wallet => Usuario _usuario) internal _userInfo;
 
   /// @notice The unique project identifier
   uint256 internal _uuid;
@@ -45,6 +44,15 @@ contract Platform is IPlatform, Ownable2Step {
   modifier verifyConfig(GovernanceConfig memory _config) {
     if (_config.delayDeGobierno < _pps.delayMinimo) revert Platform_InvalidParameter();
     if (_config.quorumMinimo < _pps.quorumMinimo) revert Platform_InvalidParameter();
+    _;
+  }
+
+  /**
+   * @notice Modifier to verify the project caller
+   * @param _projectUuid The uuid of the project
+   */
+  modifier onlyProject(uint256 _projectUuid) {
+    if (msg.sender != proyectoPorId[_projectUuid]) revert Platform_InvalidCaller();
     _;
   }
 
@@ -77,6 +85,7 @@ contract Platform is IPlatform, Ownable2Step {
     GovernanceConfig calldata _govConfig
   ) external payable verifyConfig(_govConfig) {
     if (msg.value < _pps.feeDeNatillera) revert Platform_InsufficientFee();
+    if (_comienzo < block.timestamp) revert Platform_InvalidParameter();
 
     address clone = Clones.clone(natilleraImpl);
     INatillera(clone).initialize(_comienzo, _implConfig, _govConfig, _getProjectConfig(msg.sender));
@@ -90,7 +99,7 @@ contract Platform is IPlatform, Ownable2Step {
     ITokenizacion.TokenizacionParams calldata _implConfig,
     GovernanceConfig calldata _govConfig
   ) external verifyConfig(_govConfig) {
-    // TODO: implement percentage fee for the tokenization
+    // TODO: implement percentage fee for the tokenization with ERC20 fees (not native token)
 
     address clone = Clones.clone(tokenizacionImpl);
     ITokenizacion(clone).initialize(_implConfig, _govConfig, _getProjectConfig(msg.sender));
@@ -99,7 +108,19 @@ contract Platform is IPlatform, Ownable2Step {
     emit DeployTokenizacion(clone, _uuid);
   }
 
+  /// @inheritdoc IPlatform
+  function registerUsuario(bytes32 _emailHash) external {
+    if (_walletRegistered(msg.sender)) revert Platform_RegistryError();
+    _userInfo[msg.sender] = Usuario({emailHash: _emailHash, projects: new uint256[](0)});
+  }
+
   /// --- ACCESS CONTROL FUNCTIONS ---
+
+  /// @inheritdoc IPlatform
+  function addMemberToProject(uint256 _projectUuid, address _wallet) external onlyProject(_projectUuid) {
+    if (!_walletRegistered(_wallet)) revert Platform_RegistryError();
+    _userInfo[_wallet].projects.push(_projectUuid);
+  }
 
   /// @inheritdoc IPlatform
   function withdrawNativeFees() external onlyOwner {
@@ -174,8 +195,8 @@ contract Platform is IPlatform, Ownable2Step {
   }
 
   /// @inheritdoc IPlatform
-  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids) {
-    return _idsPorUsuario[_usuario];
+  function getUserInfo(address _wallet) external view returns (Usuario memory _usuario) {
+    return _userInfo[_wallet];
   }
 
   /// --- INTERNAL FUNCTIONS ---
@@ -228,11 +249,7 @@ contract Platform is IPlatform, Ownable2Step {
    */
   function _getProjectConfig(address _creator) internal returns (ProjectConfig memory _projectConfig) {
     ++_uuid;
-    _projectConfig = ProjectConfig({
-      uuid: _uuid,
-      creator: _creator,
-      platform: address(this)
-    });
+    _projectConfig = ProjectConfig({uuid: _uuid, creator: _creator, platform: address(this)});
   }
 
   /**
@@ -251,5 +268,9 @@ contract Platform is IPlatform, Ownable2Step {
    */
   function _balanceGTZero(address _token) internal view returns (bool _isGTZero) {
     _isGTZero = _getBalancePorToken(_token) > 0;
+  }
+
+  function _walletRegistered(address _wallet) internal view returns (bool _isRegistered) {
+    _isRegistered = _userInfo[_wallet].emailHash != bytes32(0);
   }
 }

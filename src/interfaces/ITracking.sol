@@ -17,8 +17,7 @@ interface ITracking {
 
   /**
    * @notice Returns the uuid of the project
-   * @param _project The project to get the uuid of
    * @return _uuid The uuid of the project
    */
-  function uuid(address _project) external view returns (uint256 _uuid);
+  function uuid() external view returns (uint256 _uuid);
 }

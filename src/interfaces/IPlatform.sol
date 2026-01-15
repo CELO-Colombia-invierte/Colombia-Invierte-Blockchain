@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {INatillera} from 'interfaces/INatillera.sol';
+import {ITokenizacion} from 'interfaces/ITokenizacion.sol';
 
 /**
  * @title Platform Contract
@@ -50,6 +51,10 @@ interface IPlatform {
     address platform;
   }
 
+  struct Usuario {
+    bytes32 emailHash;
+    uint256[] projects;
+  }
 
   /*///////////////////////////////////////////////////////////////
                             EVENTS
@@ -94,59 +99,89 @@ interface IPlatform {
   error Platform_BalanceZero();
   /// @notice Error emitted when the deployment fee is insufficient
   error Platform_InsufficientFee();
-  /// @notice Error emitted when the token is already registered
+  /// @notice Error emitted when the token is already registered or the registered wallet does not match the usuario
   error Platform_RegistryError();
+  /// @notice Error emitted when the project caller is invalid
+  error Platform_InvalidCaller();
 
   /*///////////////////////////////////////////////////////////////
                             LOGIC FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
    * @notice Deploys a new natillera
+   * @param _comienzo The start timestamp of the natillera
    * @param _natConfig The configuration of the natillera
    * @param _govConfig The governance configuration
    */
-  function deployNatillera(INatillera.NatilleraConfig memory _natConfig, GovernanceConfig memory _govConfig) external payable;
+  function deployNatillera(
+    uint256 _comienzo,
+    INatillera.NatilleraConfig calldata _natConfig,
+    GovernanceConfig calldata _govConfig
+  ) external payable;
 
   /**
    * @notice Deploys a new tokenizacion
    * @param _tokenConfig The configuration of the tokenizacion
    * @param _govConfig The governance configuration
    */
-  function deployTokenizacion(TokenizacionParams memory _tokenConfig, GovernanceConfig memory _govConfig) external;
+  function deployTokenizacion(
+    ITokenizacion.TokenizacionParams memory _tokenConfig,
+    GovernanceConfig memory _govConfig
+  ) external;
+
+  /**
+   * @notice Registers a usuario (user email hash) to a wallet address
+   * @param _usuario The usuario to register (keccak256 hash of user email)
+   */
+  function registerUsuario(bytes32 _usuario) external;
 
   /*///////////////////////////////////////////////////////////////
                             ACCESS CONTROL FUNCTIONS
   //////////////////////////////////////////////////////////////*/
   /**
+   * @notice Adds a member to the project. The wallet must be registered to an email.
+   * @dev onlyProject
+   * @param _projectUuid The uuid of the project
+   * @param _wallet The wallet address to add
+   */
+  function addMemberToProject(uint256 _projectUuid, address _wallet) external;
+
+  /**
    * @notice Withdraws the native fees
+   * @dev onlyOwner
    */
   function withdrawNativeFees() external;
 
   /**
    * @notice Withdraws all fees
+   * @dev onlyOwner
    */
   function withdrawERC20Fees() external;
 
   /**
    * @notice Withdraws the fees for a specific token
+   * @dev onlyOwner
    * @param _token The token to withdraw the fees from
    */
   function withdrawERC20FeesPorToken(address _token) external;
 
   /**
    * @notice Add a token to the registry
+   * @dev onlyOwner
    * @param _token The token to add to the registry
    */
   function addToken(address _token) external;
 
   /**
    * @notice Remove a token from the registry
+   * @dev onlyOwner
    * @param _token The token to remove from the registry
    */
   function removeToken(address _token) external;
 
   /**
    * @notice Updates the parameters of the contract
+   * @dev onlyOwner
    * @param _parameter The parameter to be updated (e.g. 'FEE_DE_NATILLERA')
    * @param _value The value to be set (e.g. 3000 for 3.0% fee)
    */
@@ -154,6 +189,7 @@ interface IPlatform {
 
   /**
    * @notice Updates the implementation of the contract
+   * @dev onlyOwner
    * @param _implementation The implementation to be updated
    * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
    */
@@ -207,20 +243,6 @@ interface IPlatform {
   function proyectoPorId(uint256 _id) external view returns (address _proyecto);
 
   /**
-   * @notice Returns the usuario by wallet
-   * @param _wallet The wallet to get the usuario of
-   * @return _usuario The usuario of the wallet (usuario = keccak256 hash of the user email)
-   */
-  function walletDeUsuario(address _wallet) external view returns (bytes32 _usuario);
-
-  /**
-   * @notice Returns the ids by usuario
-   * @param _usuario The usuario to get the ids of (usuario = keccak256 hash of the user email)
-   * @return _ids The ids of the usuario
-   */
-  function idsPorUsuario(bytes32 _usuario) external view returns (uint256[] memory _ids);
-
-  /**
    * @notice Returns the tokens
    * @return _tokens The tokens
    */
@@ -232,4 +254,11 @@ interface IPlatform {
    * @return _balance The balance of the token
    */
   function getBalancePorToken(address _token) external view returns (uint256 _balance);
+
+  /**
+   * @notice Returns the user info for a wallet
+   * @param _wallet The wallet to get the user info of
+   * @return _usuario The user info of the wallet
+   */
+  function getUserInfo(address _wallet) external view returns (Usuario memory _usuario);
 }
