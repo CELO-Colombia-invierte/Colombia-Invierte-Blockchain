@@ -35,6 +35,10 @@
     "test/unit/**/*.tree": "yarn lint:bulloak",
     "package.json": "sort-package-json"
   },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "@openzeppelin/contracts-upgradeable": "5.4.0"
+  },
   "devDependencies": {
     "@commitlint/cli": "19.3.0",
     "@commitlint/config-conventional": "19.2.2",
