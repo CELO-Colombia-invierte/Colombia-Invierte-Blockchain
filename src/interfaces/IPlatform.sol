@@ -1,269 +1,494 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {INatillera} from 'interfaces/INatillera.sol';
-import {ITokenizacion} from 'interfaces/ITokenizacion.sol';
+import {INatillera} from "interfaces/INatillera.sol";
+import {ITokenizacion} from "interfaces/ITokenizacion.sol";
 
 /**
- * @title Platform Contract
+ * @title IPlatform
  * @author K-Labs
- * @notice This is a factory and fee collection contract for the platform
+ * @notice Factory and fee collection contract for the platform
+ * @dev This interface defines the complete API for the Platform contract
+ * @dev All fee percentages are expressed in basis points (1/100th of 1%)
+ * @dev Project IDs start from 1 (0 is reserved/invalid)
+ * @dev Contract includes pausability for emergency situations
  */
 interface IPlatform {
-  /*///////////////////////////////////////////////////////////////
-                            DATA STRUCTS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice PlatformParams of the contract
-   * @param feeDeNatillera The deployment fee for the natillera: flat fee in native token
-   * @param feeDeTokenizacion The deployment fee for the tokenizacion: percentage fee of value of the tokenization
-   * @param feeDeWithdrawal The withdrawal fee: percentage fee of the withdrawal amount
-   * @param delayMinimo The minimum delay for the governance execution
-   * @param quorumMinimo The minimum quorum for the governance
-   */
-  struct PlatformParams {
-    uint256 feeDeNatillera;
-    uint256 feeDeTokenizacion;
-    uint256 feeDeWithdrawal;
-    uint256 delayMinimo;
-    uint256 quorumMinimo;
-  }
+    /*///////////////////////////////////////////////////////////////
+                                STRUCTS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice GovernanceConfig struct for clone deployments
-   * @param delayDeGobierno The delay for the governance execution
-   * @param quorumMinimo The minimum quorum for the governance
-   */
-  struct GovernanceConfig {
-    uint256 delayDeGobierno;
-    uint256 quorumMinimo;
-  }
+    /**
+     * @notice Platform configuration parameters
+     * @param natilleraFee Flat fee for natillera deployment (in native currency)
+     * @param tokenizationFee Percentage fee for tokenization deployment (in basis points)
+     * @param withdrawalFee Percentage fee for withdrawals (in basis points)
+     * @param minDelay Minimum governance execution delay (in seconds)
+     * @param minQuorum Minimum governance quorum (in basis points)
+     */
+    struct PlatformParams {
+        uint256 natilleraFee;
+        uint256 tokenizationFee; // basis points (1/100th of 1%)
+        uint256 withdrawalFee; // basis points (1/100th of 1%)
+        uint256 minDelay; // seconds
+        uint256 minQuorum; // basis points (1/100th of 1%)
+    }
 
-  /**
-   * @notice ProjectConfig struct for project deployment
-   * @param uuid The uuid of the project
-   * @param creator The creator of the project
-   * @param platform The platform of the project
-   */
-  struct ProjectConfig {
-    uint256 uuid;
-    address creator;
-    address platform;
-  }
+    /**
+     * @notice Governance configuration for projects
+     * @param governanceDelay Delay for governance execution (in seconds)
+     * @param minQuorum Minimum quorum for governance proposals (in basis points)
+     */
+    struct GovernanceConfig {
+        uint256 governanceDelay; // seconds
+        uint256 minQuorum; // basis points (1/100th of 1%)
+    }
 
-  /**
-   * @notice Usuario struct for user info
-   * @param emailHash The email hash of the user
-   * @param projects The projects of the user
-   */
-  struct Usuario {
-    bytes32 emailHash;
-    uint256[] projects;
-  }
+    /**
+     * @notice Project configuration passed to deployed contracts
+     * @param projectId Unique identifier for the project
+     * @param creator Address of the project creator
+     * @param platform Address of the platform contract
+     */
+    struct ProjectConfig {
+        uint256 projectId;
+        address creator;
+        address platform;
+    }
 
-  /*///////////////////////////////////////////////////////////////
-                            EVENTS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Event emitted when the natillera is deployed
-   * @param _natillera The address of the deployed natillera
-   * @param _id The id of the natillera
-   */
-  event DeployNatillera(address indexed _natillera, uint256 indexed _id);
+    /**
+     * @notice User information structure
+     * @param emailHash keccak256 hash of user's email (for privacy)
+     * @param projectIds Array of project IDs the user participates in
+     */
+    struct UserInfo {
+        bytes32 emailHash;
+        uint256[] projectIds;
+    }
 
-  /**
-   * @notice Event emitted when the tokenizacion is deployed
-   * @param _tokenizacion The address of the deployed tokenizacion
-   * @param _id The id of the tokenizacion
-   */
-  event DeployTokenizacion(address indexed _tokenizacion, uint256 indexed _id);
+    /*///////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Event emitted when a token is allowed or disallowed
-   * @param _token The token that was allowed or disallowed
-   * @param _allowed True if the token is allowed, false otherwise
-   */
-  event UpdateToken(address indexed _token, bool indexed _allowed);
+    /**
+     * @notice Emitted when a new natillera is deployed
+     * @param natillera Address of the deployed natillera contract
+     * @param projectId Unique ID of the project
+     * @param creator Address of the project creator
+     */
+    event NatilleraDeployed(
+        address indexed natillera,
+        uint256 indexed projectId,
+        address creator
+    );
 
-  /**
-   * @notice Event emitted when the parameters are set
-   * @param _parameter The parameter that was set
-   * @param _value The value that was set
-   */
-  event ParametersSet(bytes32 indexed _parameter, uint256 indexed _value);
+    /**
+     * @notice Emitted when a new tokenization project is deployed
+     * @param tokenization Address of the deployed tokenization contract
+     * @param projectId Unique ID of the project
+     * @param creator Address of the project creator
+     */
+    event TokenizacionDeployed(
+        address indexed tokenization,
+        uint256 indexed projectId,
+        address creator
+    );
 
-  /*///////////////////////////////////////////////////////////////
-                            ERRORS
-  //////////////////////////////////////////////////////////////*/
+    /**
+     * @notice Emitted when a user registers on the platform
+     * @param user Address of the registered user
+     * @param emailHash Hash of the user's email
+     */
+    event UserRegistered(address indexed user, bytes32 emailHash);
 
-  /// @notice Error emitted when the parameter is invalid
-  error Platform_InvalidParameter();
-  /// @notice Error emitted when the token is invalid
-  error Platform_InvalidToken();
-  /// @notice Error emitted when the balance is zero
-  error Platform_BalanceZero();
-  /// @notice Error emitted when the deployment fee is insufficient
-  error Platform_InsufficientFee();
-  /// @notice Error emitted when the token is already registered or the registered wallet does not match the usuario
-  error Platform_RegistryError();
-  /// @notice Error emitted when the project caller is invalid
-  error Platform_InvalidCaller();
+    /**
+     * @notice Emitted when a user is added to a project
+     * @param projectId ID of the project
+     * @param user Address of the user added
+     * @param addedBy Address that performed the addition (project contract)
+     */
+    event UserAddedToProject(
+        uint256 indexed projectId,
+        address indexed user,
+        address indexed addedBy
+    );
 
-  /*///////////////////////////////////////////////////////////////
-                            LOGIC FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Deploys a new natillera
-   * @param _comienzo The start timestamp of the natillera
-   * @param _natConfig The configuration of the natillera
-   * @param _govConfig The governance configuration
-   */
-  function deployNatillera(
-    uint256 _comienzo,
-    INatillera.NatilleraConfig calldata _natConfig,
-    GovernanceConfig calldata _govConfig
-  ) external payable;
+    /**
+     * @notice Emitted when a token's status is updated
+     * @param token Address of the ERC20 token
+     * @param allowed Whether the token is now allowed (true) or disallowed (false)
+     */
+    event TokenStatusUpdated(address indexed token, bool allowed);
 
-  /**
-   * @notice Deploys a new tokenizacion
-   * @param _tokenConfig The configuration of the tokenizacion
-   * @param _govConfig The governance configuration
-   */
-  function deployTokenizacion(
-    ITokenizacion.TokenizacionParams memory _tokenConfig,
-    GovernanceConfig memory _govConfig
-  ) external;
+    /**
+     * @notice Emitted when platform parameters are updated
+     * @param parameter Identifier of the parameter changed
+     * @param value New value of the parameter
+     */
+    event ParameterUpdated(bytes32 indexed parameter, uint256 value);
 
-  /**
-   * @notice Registers a usuario (user email hash) to a wallet address
-   * @param _usuario The usuario to register (keccak256 hash of user email)
-   */
-  function registerUsuario(bytes32 _usuario) external;
+    /**
+     * @notice Emitted when an implementation contract is updated
+     * @param implementationType Type of implementation ("NATILLERA" or "TOKENIZACION")
+     * @param implementation Address of the new implementation
+     * @param version New version number
+     */
+    event ImplementationUpdated(
+        bytes32 indexed implementationType,
+        address implementation,
+        uint256 version
+    );
 
-  /*///////////////////////////////////////////////////////////////
-                            ACCESS CONTROL FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Adds a member to the project. The wallet must be registered to an email.
-   * @dev onlyProject
-   * @param _projectUuid The uuid of the project
-   * @param _wallet The wallet address to add
-   */
-  function addMemberToProject(uint256 _projectUuid, address _wallet) external;
+    /**
+     * @notice Emitted when native currency fees are withdrawn
+     * @param recipient Address that received the fees (owner)
+     * @param amount Amount withdrawn
+     */
+    event NativeFeesWithdrawn(address indexed recipient, uint256 amount);
 
-  /**
-   * @notice Withdraws the native fees
-   * @dev onlyOwner
-   */
-  function withdrawNativeFees() external;
+    /**
+     * @notice Emitted when ERC20 fees are withdrawn
+     * @param token Address of the ERC20 token
+     * @param recipient Address that received the fees (owner)
+     * @param amount Amount withdrawn
+     */
+    event ERC20FeesWithdrawn(
+        address indexed token,
+        address indexed recipient,
+        uint256 amount
+    );
 
-  /**
-   * @notice Withdraws all fees
-   * @dev onlyOwner
-   */
-  function withdrawERC20Fees() external;
+    /**
+     * @notice Emitted when excess ETH is refunded
+     * @param recipient Address that received the refund
+     * @param amount Amount refunded
+     */
+    event ExcessEthRefunded(address indexed recipient, uint256 amount);
 
-  /**
-   * @notice Withdraws the fees for a specific token
-   * @dev onlyOwner
-   * @param _token The token to withdraw the fees from
-   */
-  function withdrawERC20FeesPorToken(address _token) external;
+    /**
+     * @notice Emitted when the contract is paused or unpaused
+     * @param account Address that triggered the pause/unpause
+     * @param paused True if paused, false if unpaused
+     */
+    event Paused(address indexed account, bool paused);
 
-  /**
-   * @notice Add a token to the registry
-   * @dev onlyOwner
-   * @param _token The token to add to the registry
-   */
-  function addToken(address _token) external;
+    /**
+     * @notice Emitted when tokens are rescued in emergency
+     * @param token Address of the rescued token
+     * @param recipient Address that received the tokens (owner)
+     * @param amount Amount rescued
+     */
+    event TokensRescued(
+        address indexed token,
+        address indexed recipient,
+        uint256 amount
+    );
 
-  /**
-   * @notice Remove a token from the registry
-   * @dev onlyOwner
-   * @param _token The token to remove from the registry
-   */
-  function removeToken(address _token) external;
+    /*///////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Updates the parameters of the contract
-   * @dev onlyOwner
-   * @param _parameter The parameter to be updated (e.g. 'FEE_DE_NATILLERA')
-   * @param _value The value to be set (e.g. 3000 for 3.0% fee)
-   */
-  function updateParameter(bytes32 _parameter, uint256 _value) external;
+    /// @notice Invalid parameter provided
+    error Platform_InvalidParameter();
 
-  /**
-   * @notice Updates the implementation of the contract
-   * @dev onlyOwner
-   * @param _implementation The implementation to be updated
-   * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
-   */
-  function updateImplementation(address _implementation, bytes32 _type) external;
+    /// @notice Invalid token address or not a proper ERC20
+    error Platform_InvalidToken();
 
-  /*///////////////////////////////////////////////////////////////
+    /// @notice Attempted to withdraw with zero balance
+    error Platform_BalanceZero();
+
+    /// @notice Insufficient fee paid for operation
+    error Platform_InsufficientFee();
+
+    /// @notice Caller is not authorized for the operation
+    error Platform_InvalidCaller();
+
+    /// @notice Transfer of funds failed
+    error Platform_TransferFailed();
+
+    /// @notice Wallet is already registered
+    error Platform_UserAlreadyRegistered();
+
+    /// @notice Wallet is not registered
+    error Platform_UserNotRegistered();
+
+    /// @notice Token is already registered
+    error Platform_TokenAlreadyRegistered();
+
+    /// @notice Token is not registered
+    error Platform_TokenNotRegistered();
+
+    /// @notice Maximum number of tokens reached
+    error Platform_MaxTokensReached();
+
+    /// @notice ETH refund failed
+    error Platform_RefundFailed();
+
+    /// @notice Operation cannot be performed while contract is paused
+    error Platform_ContractPaused();
+
+    /// @notice Operation cannot be performed while contract is not paused
+    error Platform_ContractNotPaused();
+
+    /*///////////////////////////////////////////////////////////////
+                            PROJECT DEPLOYMENT
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Deploys a new Natillera contract
+     * @dev Requires payment of native currency fee, excess is refunded
+     * @dev Validates start time is within reasonable future bounds (max 1 year)
+     * @dev Contract must not be paused
+     * @param startTimestamp When the natillera should start accepting contributions
+     * @param natilleraConfig Configuration specific to the natillera
+     * @param governanceConfig Governance parameters for the natillera
+     */
+    function deployNatillera(
+        uint256 startTimestamp,
+        INatillera.NatilleraConfig calldata natilleraConfig,
+        GovernanceConfig calldata governanceConfig
+    ) external payable;
+
+    /**
+     * @notice Deploys a new Tokenization contract
+     * @dev Fee can be paid in native currency or registered ERC20 token
+     * @dev Fee is calculated as percentage of total token value (price * quantity)
+     * @dev Contract must not be paused
+     * @param tokenizationParams Tokenization project parameters
+     * @param governanceConfig Governance parameters for the tokenization
+     */
+    function deployTokenizacion(
+        ITokenizacion.TokenizacionParams calldata tokenizationParams,
+        GovernanceConfig calldata governanceConfig
+    ) external payable;
+
+    /*///////////////////////////////////////////////////////////////
+                            USER MANAGEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Registers a new user with their email hash
+     * @dev Contract must not be paused
+     * @param emailHash keccak256 hash of user's email for privacy
+     */
+    function registerUser(bytes32 emailHash) external;
+
+    /**
+     * @notice Adds a user to a specific project
+     * @dev Only callable by the project contract itself
+     * @dev User must be registered on the platform
+     * @param projectId ID of the project
+     * @param user Address of the user to add
+     */
+    function addUserToProject(uint256 projectId, address user) external;
+
+    /*///////////////////////////////////////////////////////////////
+                            FEE MANAGEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Withdraws accumulated native currency fees to owner
+     * @dev Uses call() instead of transfer() for forward compatibility
+     * @dev Can be called even when contract is paused
+     */
+    function withdrawNativeFees() external;
+
+    /**
+     * @notice Withdraws all registered ERC20 token fees to owner
+     * @dev Iterates through all registered tokens
+     * @dev Can be called even when contract is paused
+     */
+    function withdrawERC20Fees() external;
+
+    /**
+     * @notice Withdraws specific ERC20 token fees to owner
+     * @dev Can be called even when contract is paused
+     * @param token Address of the ERC20 token to withdraw
+     */
+    function withdrawERC20FeesByToken(address token) external;
+
+    /*///////////////////////////////////////////////////////////////
+                            ADMINISTRATION
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Adds a new ERC20 token to the allowed list
+     * @dev Validates token is a proper ERC20 with non-zero total supply
+     * @dev Maximum 100 tokens can be registered
+     * @param token Address of the ERC20 token to register
+     */
+    function registerToken(address token) external;
+
+    /**
+     * @notice Removes an ERC20 token from the allowed list
+     * @param token Address of the ERC20 token to deregister
+     */
+    function deregisterToken(address token) external;
+
+    /**
+     * @notice Updates platform parameters
+     * @dev Only owner can call this function
+     * @dev Fee parameters cannot exceed 100% (10,000 basis points)
+     * @param parameter Identifier of the parameter to update
+     * @param value New value for the parameter
+     */
+    function updateParameter(bytes32 parameter, uint256 value) external;
+
+    /**
+     * @notice Updates implementation contracts
+     * @dev Only owner can call this function
+     * @dev Implementation version is incremented automatically
+     * @param implementation New implementation address
+     * @param implementationType Type of implementation ("NATILLERA" or "TOKENIZACION")
+     */
+    function updateImplementation(
+        address implementation,
+        bytes32 implementationType
+    ) external;
+
+    /*///////////////////////////////////////////////////////////////
+                            EMERGENCY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Pauses the contract, stopping critical operations
+     * @dev Only owner can pause the contract
+     * @dev Prevents new project deployments and user registrations
+     */
+    function pause() external;
+
+    /**
+     * @notice Unpauses the contract, resuming normal operations
+     * @dev Only owner can unpause the contract
+     */
+    function unpause() external;
+
+    /**
+     * @notice Emergency function to rescue accidentally sent tokens
+     * @dev Only for tokens not registered in the platform
+     * @dev Only owner can rescue tokens
+     * @dev Can be called even when contract is paused
+     * @param token Address of the token to rescue
+     * @param amount Amount to rescue
+     */
+    function rescueToken(address token, uint256 amount) external;
+
+    /*///////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Returns the implementation of the natillera
-   * @return _implementation The current implementation address of the natillera
-   */
-  function natilleraImpl() external view returns (address _implementation);
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Returns the version of the natillera implementation
-   * @return _version The current version of the natillera implementation
-   */
-  function natilleraVersion() external view returns (uint256 _version);
+    /**
+     * @notice Returns the current Natillera implementation address
+     * @return implementation Address of the Natillera implementation
+     */
+    function natilleraImplementation()
+        external
+        view
+        returns (address implementation);
 
-  /**
-   * @notice Returns the implementation of the tokenizacion
-   * @return _implementation The current implementation address of the tokenizacion
-   */
-  function tokenizacionImpl() external view returns (address _implementation);
+    /**
+     * @notice Returns the current Natillera implementation version
+     * @return version Current version number
+     */
+    function natilleraVersion() external view returns (uint256 version);
 
-  /**
-   * @notice Returns the version of the tokenizacion implementation
-   * @return _version The current version of the tokenizacion implementation
-   */
-  function tokenizacionVersion() external view returns (uint256 _version);
+    /**
+     * @notice Returns the current Tokenization implementation address
+     * @return implementation Address of the Tokenization implementation
+     */
+    function tokenizacionImplementation()
+        external
+        view
+        returns (address implementation);
 
-  /**
-   * @notice Returns the parameters of the contract
-   * @return _parameters The parameters of the contract
-   */
-  function parameters() external view returns (PlatformParams memory _parameters);
+    /**
+     * @notice Returns the current Tokenization implementation version
+     * @return version Current version number
+     */
+    function tokenizacionVersion() external view returns (uint256 version);
 
-  /**
-   * @notice Checks if a token is allowed
-   * @param _token The token to check the status of
-   * @return _allowed True if the token is allowed, false otherwise
-   */
-  function tokenStatus(address _token) external view returns (bool _allowed);
+    /**
+     * @notice Returns current platform parameters
+     * @return params Current platform parameters
+     */
+    function getPlatformParameters()
+        external
+        view
+        returns (PlatformParams memory params);
 
-  /**
-   * @notice Returns the proyecto by id
-   * @param _id The id of the proyecto
-   * @return _proyecto The address of the proyecto
-   */
-  function proyectoPorId(uint256 _id) external view returns (address _proyecto);
+    /**
+     * @notice Returns list of all registered ERC20 tokens
+     * @return tokens Array of registered token addresses
+     */
+    function getRegisteredTokens()
+        external
+        view
+        returns (address[] memory tokens);
 
-  /**
-   * @notice Returns the tokens
-   * @return _tokens The tokens
-   */
-  function tokens() external view returns (address[] memory _tokens);
+    /**
+     * @notice Returns user information for a specific address
+     * @param user Address of the user
+     * @return info User information including email hash and project IDs
+     */
+    function getUserInfo(
+        address user
+    ) external view returns (UserInfo memory info);
 
-  /**
-   * @notice Returns the balance of the treasury for a token
-   * @param _token The token to get the balance of
-   * @return _balance The balance of the token
-   */
-  function getBalancePorToken(address _token) external view returns (uint256 _balance);
+    /**
+     * @notice Returns balance of specific token held by platform
+     * @param token Address of the ERC20 token
+     * @return balance Current balance of the token
+     */
+    function getTokenBalance(
+        address token
+    ) external view returns (uint256 balance);
 
-  /**
-   * @notice Returns the user info for a wallet
-   * @param _wallet The wallet to get the user info of
-   * @return _usuario The user info of the wallet
-   */
-  function getUserInfo(address _wallet) external view returns (Usuario memory _usuario);
+    /**
+     * @notice Checks if an address is registered as a user
+     * @param user Address to check
+     * @return registered True if registered, false otherwise
+     */
+    function isUserRegistered(
+        address user
+    ) external view returns (bool registered);
+
+    /**
+     * @notice Returns the total number of projects created
+     * @return total Number of projects (project IDs start from 1)
+     */
+    function totalProjects() external view returns (uint256 total);
+
+    /**
+     * @notice Returns project address by ID
+     * @param projectId ID of the project
+     * @return project Address of the project contract
+     */
+    function getProjectById(
+        uint256 projectId
+    ) external view returns (address project);
+
+    /**
+     * @notice Checks if a token is registered and allowed
+     * @param token Address of the token to check
+     * @return registered True if registered, false otherwise
+     */
+    function isTokenRegistered(
+        address token
+    ) external view returns (bool registered);
+
+    /**
+     * @notice Returns project address by ID (alias for getProjectById)
+     * @dev Maintains backward compatibility with original interface
+     * @param id ID of the project
+     * @return proyecto Address of the project contract
+     */
+    function proyectoPorId(uint256 id) external view returns (address proyecto);
+
+    /**
+     * @notice Checks if a token is allowed (alias for isTokenRegistered)
+     * @dev Maintains backward compatibility with original interface
+     * @param token Address of the token to check
+     * @return allowed True if allowed, false otherwise
+     */
+    function tokenStatus(address token) external view returns (bool allowed);
 }
