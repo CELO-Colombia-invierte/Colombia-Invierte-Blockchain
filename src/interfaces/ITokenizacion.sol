@@ -1,177 +1,317 @@
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {IPlatform} from 'interfaces/IPlatform.sol';
-import {ITracking} from 'interfaces/ITracking.sol';
+import {IPlatform} from "interfaces/IPlatform.sol";
+import {ITracking} from "interfaces/ITracking.sol";
 
 /**
- * @title Tokenizacion Contract
+ * @title ITokenizacion
  * @author K-Labs
- * @notice This is a contract for the tokenization of a project
+ * @notice Interface for tokenization project contracts
+ * @dev Implements internal token sale mechanism for non-transferable project positions
+ * @dev Tokens represent non-transferable project ownership positions (NOT ERC20)
+ * @dev Supports optional presale phase with whitelist and public sale phase
  */
 interface ITokenizacion is ITracking {
-  /*///////////////////////////////////////////////////////////////
-                            DATA STRUCTS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice TokenizacionParams struct for project configuration
-   * @param token The payment token (ERC20 address or address(0) for native)
-   * @param pricePerToken The price per token in wei (or token units)
-   * @param totalTokens The total number of tokens available for sale
-   * @param presaleEnabled Whether presale is enabled
-   * @param presaleStartsAt Timestamp when presale starts (0 if disabled)
-   * @param publicSaleStartsAt Timestamp when public sale starts (0 if disabled)
-   */
-  struct TokenizacionParams {
-    address token;
-    uint256 pricePerToken;
-    uint256 totalTokens;
-    bool presaleEnabled;
-    uint256 presaleStartsAt;
-    uint256 publicSaleStartsAt;
-  }
+    /*//////////////////////////////////////////////////////////////
+                                STRUCTS
+    //////////////////////////////////////////////////////////////*/
 
-  /*///////////////////////////////////////////////////////////////
-                            EVENTS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Event emitted when tokens are purchased
-   * @param _investor The address of the investor
-   * @param _amount The amount of tokens purchased
-   * @param _paymentAmount The amount paid for the tokens
-   */
-  event TokensPurchased(address indexed _investor, uint256 indexed _amount, uint256 indexed _paymentAmount);
+    /**
+     * @notice Tokenization configuration parameters
+     * @param paymentToken Payment token address (address(0) for native currency)
+     * @param pricePerToken Price per internal token unit
+     * @param totalTokens Total number of tokens available for sale
+     * @param presaleEnabled Whether presale phase is enabled
+     * @param presaleStartsAt Timestamp when presale starts (0 if disabled)
+     * @param publicSaleStartsAt Timestamp when public sale starts (0 if immediate)
+     */
+    struct TokenizacionParams {
+        address paymentToken;
+        uint256 pricePerToken;
+        uint256 totalTokens;
+        bool presaleEnabled;
+        uint256 presaleStartsAt;
+        uint256 publicSaleStartsAt;
+    }
 
-  /**
-   * @notice Event emitted when an investor is added
-   * @param _investor The address of the investor
-   */
-  event InvestorAdded(address indexed _investor);
+    /*//////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-  /*///////////////////////////////////////////////////////////////
-                            ERRORS
-  //////////////////////////////////////////////////////////////*/
-  /// @notice Error emitted when the sale is not active
-  error Tokenizacion_SaleNotActive();
-  /// @notice Error emitted when the payment amount is insufficient
-  error Tokenizacion_InsufficientPayment();
-  /// @notice Error emitted when there are not enough tokens available
-  error Tokenizacion_InsufficientTokens();
-  /// @notice Error emitted when the investor is not registered
-  error Tokenizacion_NotInvestor();
-  /// @notice Error emitted when trying to purchase zero tokens
-  error Tokenizacion_InvalidAmount();
-  /// @notice Error emitted when trying to use wrong payment method
-  error Tokenizacion_InvalidPaymentMethod();
-  /// @notice Error emitted when sale has not started yet
-  error Tokenizacion_SaleNotStarted();
-  /// @notice Error emitted when a transfer operation fails
-  error Tokenizacion_TransferFailed();
-  /// @notice Error emitted when configuration parameters are invalid
-  error Tokenizacion_InvalidConfig();
+    /**
+     * @notice Emitted when the tokenization contract is initialized
+     * @param projectId Project ID from platform
+     * @param creator Creator address
+     * @param totalTokens Total tokens available for sale
+     * @param pricePerToken Price per token
+     * @param presaleEnabled Whether presale is enabled
+     */
+    event TokenizacionInitialized(
+        uint256 indexed projectId,
+        address creator,
+        uint256 totalTokens,
+        uint256 pricePerToken,
+        bool presaleEnabled
+    );
 
-  /*///////////////////////////////////////////////////////////////
-                            LOGIC FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Initializes the tokenizacion
-   * @param _config The configuration of the tokenizacion
-   * @param _govConfig The governance configuration for the tokenizacion
-   * @param _projectConfig The project configuration for the tokenizacion
-   */
-  function initialize(
-    TokenizacionParams calldata _config,
-    IPlatform.GovernanceConfig calldata _govConfig,
-    IPlatform.ProjectConfig calldata _projectConfig
-  ) external;
+    /**
+     * @notice Emitted when tokens are purchased
+     * @param investor Buyer address
+     * @param amount Amount of internal tokens purchased
+     * @param paymentAmount Payment amount used
+     */
+    event TokensPurchased(
+        address indexed investor,
+        uint256 amount,
+        uint256 paymentAmount
+    );
 
-  /**
-   * @notice Purchases tokens with native currency
-   * @param _amount The amount of tokens to purchase
-   */
-  function purchaseTokens(uint256 _amount) external payable;
+    /**
+     * @notice Emitted when an investor is whitelisted for presale
+     * @param investor Investor address
+     */
+    event InvestorAdded(address indexed investor);
 
-  /**
-   * @notice Purchases tokens with ERC20 token
-   * @param _amount The amount of tokens to purchase
-   */
-  function purchaseTokensWithERC20(uint256 _amount) external;
+    /**
+     * @notice Emitted when funds are withdrawn from the contract
+     * @param recipient Address that received the funds
+     * @param amount Amount withdrawn
+     * @param token Token address (address(0) for native currency)
+     */
+    event FundsWithdrawn(
+        address indexed recipient,
+        uint256 amount,
+        address indexed token
+    );
 
-  /**
-   * @notice Adds an investor to the project (presale access)
-   * @param _investor The address of the investor to add
-   */
-  function addInvestor(address _investor) external;
+    /**
+     * @notice Emitted when the contract is paused
+     * @param account Address that triggered the pause
+     */
+    event Paused(address indexed account);
 
-  /*///////////////////////////////////////////////////////////////
-                            VIEW FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Returns the configuration of the tokenizacion
-   * @return _config The configuration
-   */
-  function config() external view returns (TokenizacionParams memory _config);
+    /**
+     * @notice Emitted when the contract is unpaused
+     * @param account Address that triggered the unpause
+     */
+    event Unpaused(address indexed account);
 
-  /**
-   * @notice Returns the list of investors
-   * @return _investors The array of investor addresses
-   */
-  function investors() external view returns (address[] memory _investors);
+    /*//////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Returns the token balance of an investor
-   * @param _investor The address of the investor
-   * @return _balance The token balance
-   */
-  function balanceOf(address _investor) external view returns (uint256 _balance);
+    /// @notice Sale is not active
+    error Tokenizacion_SaleNotActive();
 
-  /**
-   * @notice Returns the total tokens sold
-   * @return _sold The total tokens sold
-   */
-  function totalTokensSold() external view returns (uint256 _sold);
+    /// @notice Insufficient payment for purchase
+    error Tokenizacion_InsufficientPayment();
 
-  /**
-   * @notice Returns the total tokens available
-   * @return _available The total tokens available
-   */
-  function totalTokensAvailable() external view returns (uint256 _available);
+    /// @notice Insufficient tokens available for sale
+    error Tokenizacion_InsufficientTokens();
 
-  /**
-   * @notice Checks if an address is an investor
-   * @param _investor The address to check
-   * @return _isInvestor True if the address is an investor
-   */
-  function isInvestor(address _investor) external view returns (bool _isInvestor);
+    /// @notice Caller is not a whitelisted investor during presale
+    error Tokenizacion_NotInvestor();
 
-  /**
-   * @notice Checks if presale is active
-   * @return _isActive True if presale is active
-   */
-  function isPresaleActive() external view returns (bool _isActive);
+    /// @notice Invalid purchase amount
+    error Tokenizacion_InvalidAmount();
 
-  /**
-   * @notice Checks if public sale is active
-   * @return _isActive True if public sale is active
-   */
-  function isPublicSaleActive() external view returns (bool _isActive);
+    /// @notice Invalid payment method for current configuration
+    error Tokenizacion_InvalidPaymentMethod();
 
-  /**
-   * @notice Withdraws collected funds (native or ERC20)
-   * @dev onlyOwner
-   * @param _to The address to withdraw to
-   */
-  function withdrawFunds(address payable _to) external;
+    /// @notice Transfer of funds failed
+    error Tokenizacion_TransferFailed();
 
-  /**
-   * @notice Calculates the cost for a given amount of tokens
-   * @param _amount The amount of tokens
-   * @return _cost The cost in payment token
-   */
-  function cost(uint256 _amount) external view returns (uint256 _cost);
+    /// @notice Invalid configuration parameters
+    error Tokenizacion_InvalidConfig();
 
-  /**
-   * @notice Returns the remaining tokens available for purchase
-   * @return _remaining The remaining tokens
-   */
-  function remainingTokens() external view returns (uint256 _remaining);
+    /// @notice Contract is paused
+    error Tokenizacion_ContractPaused();
+
+    /// @notice Contract is not paused
+    error Tokenizacion_ContractNotPaused();
+
+    /// @notice Invalid investor address
+    error Tokenizacion_InvalidInvestor();
+
+    /// @notice Investor already whitelisted
+    error Tokenizacion_AlreadyInvestor();
+
+    /// @notice Maximum number of investors reached
+    error Tokenizacion_MaxInvestorsReached();
+
+    /// @notice Invalid recipient address
+    error Tokenizacion_InvalidRecipient();
+
+    /// @notice Insufficient funds to withdraw
+    error Tokenizacion_InsufficientFunds();
+
+    /// @notice Overflow in calculation
+    error Tokenizacion_Overflow();
+
+    /*//////////////////////////////////////////////////////////////
+                            INITIALIZATION
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the tokenization contract
+     * @dev Can only be called once
+     * @param tokenConfig Tokenization configuration
+     * @param governanceConfig Governance configuration (reserved for future use)
+     * @param projectConfig Project configuration provided by Platform
+     */
+    function initialize(
+        TokenizacionParams calldata tokenConfig,
+        IPlatform.GovernanceConfig calldata governanceConfig,
+        IPlatform.ProjectConfig calldata projectConfig
+    ) external;
+
+    /*//////////////////////////////////////////////////////////////
+                            PURCHASE FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Purchase tokens using native currency
+     * @dev Must send exact payment amount (pricePerToken * amount)
+     * @dev Contract must be active (not paused) and sale must be active
+     * @param amount Number of tokens to purchase
+     */
+    function purchaseTokens(uint256 amount) external payable;
+
+    /**
+     * @notice Purchase tokens using ERC20 token
+     * @dev Contract must be active (not paused) and sale must be active
+     * @dev ERC20 token must match configured paymentToken
+     * @param amount Number of tokens to purchase
+     */
+    function purchaseTokensWithERC20(uint256 amount) external;
+
+    /*//////////////////////////////////////////////////////////////
+                            ADMIN FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Adds an address to the presale whitelist
+     * @dev Only owner can add investors
+     * @dev Contract must be active (not paused)
+     * @param investor Address to whitelist
+     */
+    function addInvestor(address investor) external;
+
+    /**
+     * @notice Withdraws collected funds to specified address
+     * @dev Only owner can withdraw funds
+     * @param recipient Address to receive the funds
+     */
+    function withdrawFunds(address payable recipient) external;
+
+    /*//////////////////////////////////////////////////////////////
+                            EMERGENCY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Pauses the tokenization, stopping purchases
+     * @dev Only owner can pause
+     */
+    function pause() external;
+
+    /**
+     * @notice Unpauses the tokenization, resuming purchases
+     * @dev Only owner can unpause
+     */
+    function unpause() external;
+
+    /*//////////////////////////////////////////////////////////////
+                                VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Returns tokenization configuration
+     * @return config Current tokenization parameters
+     */
+    function config() external view returns (TokenizacionParams memory config);
+
+    /**
+     * @notice Returns list of all investors (whitelisted + buyers)
+     * @return investors Array of investor addresses
+     */
+    function investors() external view returns (address[] memory investors);
+
+    /**
+     * @notice Returns internal (non-transferable) token balance for an investor
+     * @param investor Investor address
+     * @return balance Token balance of the investor
+     */
+    function balanceOf(
+        address investor
+    ) external view returns (uint256 balance);
+
+    /**
+     * @notice Returns total tokens sold
+     * @return sold Total number of tokens sold
+     */
+    function totalTokensSold() external view returns (uint256 sold);
+
+    /**
+     * @notice Returns remaining tokens available for sale
+     * @return remaining Number of tokens remaining
+     */
+    function remainingTokens() external view returns (uint256 remaining);
+
+    /**
+     * @notice Checks if an address is whitelisted for presale
+     * @param investor Address to check
+     * @return isWhitelisted True if whitelisted, false otherwise
+     */
+    function isInvestor(
+        address investor
+    ) external view returns (bool isWhitelisted);
+
+    /**
+     * @notice Checks if presale is currently active
+     * @return active True if presale is active, false otherwise
+     */
+    function isPresaleActive() external view returns (bool active);
+
+    /**
+     * @notice Checks if public sale is currently active
+     * @return active True if public sale is active, false otherwise
+     */
+    function isPublicSaleActive() external view returns (bool active);
+
+    /**
+     * @notice Calculates cost for specified number of tokens
+     * @param amount Number of tokens
+     * @return cost Total cost (pricePerToken * amount)
+     */
+    function cost(uint256 amount) external view returns (uint256 cost);
+
+    /**
+     * @notice Returns total funds collected from all purchases
+     * @return collected Total amount collected
+     */
+    function totalCollected() external view returns (uint256 collected);
+
+    /**
+     * @notice Returns total number of investors
+     * @return count Number of investors
+     */
+    function investorCount() external view returns (uint256 count);
+
+    /**
+     * @notice Returns complete sale status information
+     * @return presaleActive Whether presale is active
+     * @return publicSaleActive Whether public sale is active
+     * @return saleActive Whether any sale is active
+     * @return remaining Number of tokens remaining
+     */
+    function saleStatus()
+        external
+        view
+        returns (
+            bool presaleActive,
+            bool publicSaleActive,
+            bool saleActive,
+            uint256 remaining
+        );
 }

@@ -166,13 +166,6 @@ interface IPlatform {
     event ExcessEthRefunded(address indexed recipient, uint256 amount);
 
     /**
-     * @notice Emitted when the contract is paused or unpaused
-     * @param account Address that triggered the pause/unpause
-     * @param paused True if paused, false if unpaused
-     */
-    event Paused(address indexed account, bool paused);
-
-    /**
      * @notice Emitted when tokens are rescued in emergency
      * @param token Address of the rescued token
      * @param recipient Address that received the tokens (owner)
@@ -223,12 +216,6 @@ interface IPlatform {
 
     /// @notice ETH refund failed
     error Platform_RefundFailed();
-
-    /// @notice Operation cannot be performed while contract is paused
-    error Platform_ContractPaused();
-
-    /// @notice Operation cannot be performed while contract is not paused
-    error Platform_ContractNotPaused();
 
     /*///////////////////////////////////////////////////////////////
                             PROJECT DEPLOYMENT

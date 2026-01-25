@@ -1,162 +1,568 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {OwnableUpgradeable} from '@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol';
-import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {Tracking} from 'contracts/Tracking.sol';
-import {INatillera} from 'interfaces/INatillera.sol';
-import {IPlatform} from 'interfaces/IPlatform.sol';
+import {Tracking} from "contracts/Tracking.sol";
+import {CycleMath} from "contracts/libraries/CycleMath.sol";
+import {INatillera} from "interfaces/INatillera.sol";
+import {IPlatform} from "interfaces/IPlatform.sol";
 
-uint256 constant MES = 30 days;
+/**
+ * @title Natillera
+ * @dev Savings pool contract implementing rotating savings and credit association
+ * @notice Members make regular monthly contributions in 30-day cycles
+ * @author K-Labs
+ * @dev Uses upgradeable pattern for potential future improvements
+ */
+contract Natillera is
+    Initializable,
+    Tracking,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
+    INatillera
+{
+    using CycleMath for CycleMath.CycleState;
+    using SafeERC20 for IERC20;
 
-contract Natillera is Initializable, Tracking, OwnableUpgradeable, INatillera {
-  /// @inheritdoc INatillera
-  uint256 public cycle;
-  /// @inheritdoc INatillera
-  uint256 public cycleDueDate;
+    /*//////////////////////////////////////////////////////////////
+                                CONSTANTS
+    //////////////////////////////////////////////////////////////*/
 
-  /// @notice Deposits of the members
-  mapping(address _member => uint256 _deposit) internal _deposits;
-  /// @notice Whether a wallet is a member
-  mapping(address _wallet => bool _member) internal _isMember;
+    /// @dev Maximum cycles that can be paid in advance (1 year)
+    uint256 private constant MAX_ADVANCE_CYCLES = 12;
 
-  /// @notice Project configuration
-  NatilleraConfig internal _config;
-  /// @notice Members of the natillera
-  address[] internal _members;
+    /// @dev Minimum monthly contribution (0.001 ETH or equivalent)
+    uint256 private constant MIN_CONTRIBUTION = 1e15;
 
-  /// @notice The start timestamp of the natillera (minus 1 month to sync the first cycle correctly)
-  uint256 internal _init;
+    /// @dev Maximum monthly contribution (1000 ETH or equivalent)
+    uint256 private constant MAX_CONTRIBUTION = 1000 ether;
 
-  /// @notice Sync to current cycle
-  modifier sync() {
-    _syncCycle();
-    _;
-  }
+    /// @dev Maximum number of members (safety limit)
+    uint256 private constant ABSOLUTE_MAX_MEMBERS = 200;
 
-  /// @notice Verify member status
-  modifier onlyMember() {
-    if (!_isMember[msg.sender]) revert Natillera_NotMember();
-    _;
-  }
+    /// @dev Maximum total months for natillera duration (5 years)
+    uint256 private constant MAX_TOTAL_MONTHS = 60;
 
-  /// @inheritdoc INatillera
-  function initialize(
-    uint256 _comienzo,
-    NatilleraConfig calldata _implConfig,
-    IPlatform.GovernanceConfig calldata _govConfig,
-    IPlatform.ProjectConfig calldata _projectConfig
-  ) external initializer {
-    _init = _comienzo - MES;
-    (uint256 _uuid, address _owner, address _platform) =
-      (_projectConfig.uuid, _projectConfig.creator, _projectConfig.platform);
-    uuid = _uuid;
-    __Ownable_init(_owner);
-    PLATFORM = _platform;
-    _config = _implConfig;
-    _syncCycle();
-  }
+    /// @dev Minimum total months for natillera duration (3 months)
+    uint256 private constant MIN_TOTAL_MONTHS = 3;
 
-  /// --- LOGIC FUNCTIONS ---
+    /*//////////////////////////////////////////////////////////////
+                                STORAGE
+    //////////////////////////////////////////////////////////////*/
 
-  /// @inheritdoc INatillera
-  function trackContribution(address _member)
-    external
-    sync
-    returns (uint256 _amountPaid, uint256 _amountDue, uint256 _missedCycles)
-  {
-    (_amountPaid, _amountDue, _missedCycles) = _trackContribution(_member);
-  }
+    /// @inheritdoc INatillera
+    uint256 public override cycle;
 
-  /// --- ACCESS CONTROL FUNCTIONS ---
+    /// @inheritdoc INatillera
+    uint256 public override cycleDueDate;
 
-  /// @inheritdoc INatillera
-  function depositSingleCycle() external payable onlyMember sync {
-    uint256 _amount = msg.value;
-    address _member = msg.sender;
-    _deposit(_member, 1, _amount);
-  }
+    /// @notice Cycle state managed by CycleMath library
+    CycleMath.CycleState private _cycleState;
 
-  /// @inheritdoc INatillera
-  function depositMultipleCycles(uint256 _cycles) external payable onlyMember sync {
-    uint256 _amount = msg.value;
-    address _member = msg.sender;
-    _deposit(_member, _cycles, _amount);
-  }
+    /// @notice Natillera configuration
+    NatilleraConfig private _config;
 
-  /// @inheritdoc INatillera
-  function addMember(address _member) external onlyOwner {
-    _addMember(_member);
-    _isMember[_member] = true;
-    _members.push(_member);
-  }
+    /// @notice Member deposits tracking
+    mapping(address => uint256) private _deposits;
 
-  /// --- VIEW FUNCTIONS ---
+    /// @notice Membership status tracking
+    mapping(address => bool) private _isMember;
 
-  /// @inheritdoc INatillera
-  function members() external view returns (address[] memory) {
-    return _members;
-  }
+    /// @notice Array of all member addresses
+    address[] private _members;
 
-  /// @inheritdoc INatillera
-  function config() external view returns (NatilleraConfig memory) {
-    return _config;
-  }
+    /// @notice Total amount collected across all members
+    uint256 private _totalCollected;
 
-  /// --- INTERNAL FUNCTIONS ---
+    /// @notice Total amount withdrawn by members
+    uint256 private _totalWithdrawn;
 
-  /**
-   * @notice Deposits funds into the natillera
-   * @param _member The member address of the member to deposit for
-   * @param _cycles The number of cycles to deposit for
-   * @param _amount The amount to deposit
-   */
-  function _deposit(address _member, uint256 _cycles, uint256 _amount) internal {
-    if (_amount != _config.cuotaPorMes * _cycles) revert Natillera_InvalidDeposit();
-    (, uint256 _amountDue,) = _trackContribution(_member);
-    if (_amount > _amountDue) revert Natillera_OverPayment();
-    bool _upToDate = _amountDue == _amount;
-    _deposits[_member] += _amount;
-    emit Deposit(_member, _amount, _upToDate);
-  }
+    /*//////////////////////////////////////////////////////////////
+                                MODIFIERS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Adds a member to the natillera
-   * @param _member The wallet address to add
-   */
-  function _addMember(address _member) internal {
-    IPlatform(PLATFORM).addMemberToProject(uuid, _member);
-  }
-
-  /**
-   * @notice Syncs the cycle to the current cycle
-   * @dev On initialization, cycle is set to 1
-   */
-  function _syncCycle() internal {
-    if (block.timestamp > cycleDueDate + MES) {
-      uint256 _currentCycle = (block.timestamp - _init) / MES;
-      cycle = _currentCycle;
-      cycleDueDate = _init + (MES * _currentCycle);
+    /**
+     * @dev Ensures cycle is synchronized before execution
+     */
+    modifier syncCycle() {
+        _syncCycle();
+        _;
     }
-  }
 
-  /**
-   * @notice Tracks the contribution of a member
-   * @param _member The wallet address to track the contribution of
-   * @return _amountPaid The amount paid for the contribution
-   * @return _amountDue The amount due for the contribution
-   * @return _missedCycles The number of missed cycles for a member
-   */
-  function _trackContribution(address _member)
-    internal
-    view
-    returns (uint256 _amountPaid, uint256 _amountDue, uint256 _missedCycles)
-  {
-    uint256 cuotaPorMes = _config.cuotaPorMes;
-    _amountDue = cuotaPorMes * cycle;
-    _amountPaid = _deposits[_member];
-    _amountDue -= _amountPaid;
-    if (_amountDue > 0) _missedCycles = _amountDue / cuotaPorMes;
-  }
+    /**
+     * @dev Restricts access to members only
+     */
+    modifier onlyMember() {
+        if (!_isMember[msg.sender]) revert Natillera_NotMember();
+        _;
+    }
+
+    /**
+     * @dev Restricts access when contract is active (not paused)
+     */
+    modifier whenActive() {
+        if (paused()) revert Natillera_ContractPaused();
+        _;
+    }
+
+    /**
+     * @dev Validates member address
+     */
+    modifier validMember(address member) {
+        if (member == address(0)) revert Natillera_InvalidMember();
+        if (member == address(this)) revert Natillera_InvalidMember();
+        _;
+    }
+
+    /**
+     * @dev Validates contribution amount
+     */
+    modifier validAmount(uint256 amount) {
+        if (amount == 0) revert Natillera_InvalidDeposit();
+        if (amount > MAX_CONTRIBUTION * MAX_ADVANCE_CYCLES) {
+            revert Natillera_InvalidDeposit();
+        }
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                INITIALIZER
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Initializes the Natillera contract
+     * @dev Sets up configuration, ownership, and initial state
+     */
+    function initialize(
+        uint256 startTimestamp,
+        NatilleraConfig calldata natilleraConfig,
+        IPlatform.GovernanceConfig calldata governanceConfig,
+        IPlatform.ProjectConfig calldata projectConfig
+    ) external override initializer notInitialized {
+        // Validate start timestamp
+        if (startTimestamp <= block.timestamp) revert Natillera_InvalidStart();
+        if (startTimestamp > block.timestamp + 365 days) {
+            revert Natillera_InvalidStart();
+        }
+
+        // Validate configuration
+        _validateConfig(natilleraConfig);
+
+        // Initialize Tracking with project information
+        __Tracking_init(
+            projectConfig.platform,
+            projectConfig.projectId,
+            projectConfig.creator
+        );
+
+        // Initialize other parent contracts
+        __ReentrancyGuard_init();
+        __Pausable_init();
+
+        // Initialize base timestamp (one cycle before start)
+        _cycleState.baseTimestamp =
+            startTimestamp -
+            CycleMath.SECONDS_PER_CYCLE;
+        CycleMath.validateTimestamp(_cycleState.baseTimestamp);
+
+        // Store configuration
+        _config = natilleraConfig;
+
+        // Initialize first cycle
+        _syncCycle();
+
+        emit NatilleraInitialized(
+            projectConfig.projectId,
+            projectConfig.creator,
+            startTimestamp,
+            natilleraConfig.monthlyContribution,
+            natilleraConfig.maxMembers
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            CORE LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Tracks a member's contribution status
+     */
+    function trackContribution(
+        address member
+    )
+        external
+        override
+        syncCycle
+        validMember(member)
+        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
+    {
+        if (!_isMember[member]) revert Natillera_NotMember();
+        return _calculateContribution(member);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Allows a member to deposit for a single cycle
+     */
+    function depositSingleCycle()
+        external
+        payable
+        override
+        onlyMember
+        syncCycle
+        nonReentrant
+        whenActive
+        validAmount(msg.value)
+    {
+        _processDeposit(msg.sender, 1, msg.value);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Allows a member to deposit for multiple cycles
+     */
+    function depositMultipleCycles(
+        uint256 cycles
+    )
+        external
+        payable
+        override
+        onlyMember
+        syncCycle
+        nonReentrant
+        whenActive
+        validAmount(msg.value)
+    {
+        if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) {
+            revert Natillera_InvalidCycles();
+        }
+        _processDeposit(msg.sender, cycles, msg.value);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Adds a new member to the natillera
+     */
+    function addMember(
+        address member
+    ) external override onlyOwner whenActive validMember(member) {
+        if (_isMember[member]) revert Natillera_AlreadyMember();
+        if (_members.length >= _config.maxMembers) {
+            revert Natillera_MaxMembersReached();
+        }
+
+        _isMember[member] = true;
+        _members.push(member);
+
+        // Register member with platform
+        IPlatform(platform()).addUserToProject(projectId(), member);
+
+        emit MemberAdded(member, block.timestamp);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            EMERGENCY FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Pauses the natillera, stopping deposits and member additions
+     */
+    function pause() external override onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Unpauses the natillera, resuming normal operations
+     */
+    function unpause() external override onlyOwner {
+        _unpause();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                VIEWS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Returns array of all member addresses
+     */
+    function members() external view override returns (address[] memory) {
+        return _members;
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Returns the current configuration
+     */
+    function config() external view override returns (NatilleraConfig memory) {
+        return _config;
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Returns deposit balance for a specific member
+     */
+    function getDepositBalance(
+        address member
+    ) external view override returns (uint256) {
+        return _deposits[member];
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Checks if an address is a member
+     */
+    function isMember(address account) external view override returns (bool) {
+        return _isMember[account];
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @notice Returns total number of members
+     */
+    function memberCount() external view override returns (uint256) {
+        return _members.length;
+    }
+
+    /**
+     * @notice Returns cycle information
+     * @return currentCycle Current cycle number
+     * @return dueDate Current cycle due date
+     * @return baseTimestamp Base timestamp for calculations
+     */
+    function getCycleInfo()
+        external
+        view
+        returns (uint256 currentCycle, uint256 dueDate, uint256 baseTimestamp)
+    {
+        return (
+            _cycleState.currentCycle,
+            _cycleState.cycleDueDate,
+            _cycleState.baseTimestamp
+        );
+    }
+
+    /**
+     * @notice Returns total collected amount
+     * @return Total amount collected from all members
+     */
+    function totalCollected() external view returns (uint256) {
+        return _totalCollected;
+    }
+
+    /**
+     * @notice Returns total withdrawn amount
+     * @return Total amount withdrawn by members
+     */
+    function totalWithdrawn() external view returns (uint256) {
+        return _totalWithdrawn;
+    }
+
+    /**
+     * @notice Returns available balance in contract
+     * @return Current contract balance
+     */
+    function availableBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    /**
+     * @notice Calculates contribution status without state changes
+     * @param member Member address
+     * @return amountPaid Total amount paid
+     * @return amountDue Amount currently due
+     * @return missedCycles Number of cycles behind
+     */
+    function calculateContribution(
+        address member
+    )
+        external
+        view
+        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
+    {
+        if (!_isMember[member]) revert Natillera_NotMember();
+        return _calculateContributionView(member);
+    }
+
+    /**
+     * @notice Checks if natillera has ended based on total months
+     * @return True if natillera has ended, false otherwise
+     */
+    function hasEnded() external view returns (bool) {
+        return cycle >= _config.totalMonths;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            INTERNAL LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @dev Processes a deposit for specified number of cycles
+     * @param member Address making the deposit
+     * @param cycles Number of cycles being paid for
+     * @param amount Deposit amount
+     */
+    function _processDeposit(
+        address member,
+        uint256 cycles,
+        uint256 amount
+    ) internal {
+        uint256 monthlyContribution = _config.monthlyContribution;
+
+        // Calculate expected amount with overflow check
+        uint256 expectedAmount;
+        unchecked {
+            expectedAmount = monthlyContribution * cycles;
+        }
+
+        // Validate payment amount matches expected
+        if (amount != expectedAmount) revert Natillera_InvalidDeposit();
+
+        // Calculate current due amount
+        (, uint256 amountDue, ) = _calculateContribution(member);
+
+        // Validate payment does not exceed due amount
+        if (amount > amountDue) revert Natillera_OverPayment();
+
+        bool isUpToDate = amount == amountDue;
+
+        // Update deposits with overflow check
+        uint256 newDepositAmount = _deposits[member] + amount;
+        require(
+            newDepositAmount >= _deposits[member],
+            "Natillera: deposit overflow"
+        );
+
+        // Update total collected
+        uint256 newTotalCollected = _totalCollected + amount;
+        require(
+            newTotalCollected >= _totalCollected,
+            "Natillera: total overflow"
+        );
+
+        _deposits[member] = newDepositAmount;
+        _totalCollected = newTotalCollected;
+
+        emit Deposit(member, amount, cycles, isUpToDate);
+    }
+
+    /**
+     * @dev Synchronizes the current cycle based on timestamp
+     */
+    function _syncCycle() internal {
+        uint256 oldCycle = cycle;
+
+        // Use CycleMath library for safe synchronization
+        _cycleState.syncCycle(block.timestamp);
+
+        // Update public state variables
+        cycle = _cycleState.currentCycle;
+        cycleDueDate = _cycleState.cycleDueDate;
+
+        // Emit event if cycle advanced
+        if (cycle > oldCycle) {
+            emit CycleAdvanced(oldCycle, cycle, cycleDueDate);
+        }
+    }
+
+    /**
+     * @dev Calculates contribution status for a member
+     * @param member Address of the member
+     * @return amountPaid Total amount paid
+     * @return amountDue Amount currently due
+     * @return missedCycles Number of cycles behind
+     */
+    function _calculateContribution(
+        address member
+    )
+        internal
+        view
+        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
+    {
+        return _calculateContributionView(member);
+    }
+
+    /**
+     * @dev View version of contribution calculation
+     */
+    function _calculateContributionView(
+        address member
+    )
+        private
+        view
+        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
+    {
+        uint256 monthlyContribution = _config.monthlyContribution;
+
+        amountPaid = _deposits[member];
+
+        // Calculate total expected up to current cycle or total months
+        uint256 cyclesToCalculate = cycle;
+        if (cyclesToCalculate > _config.totalMonths) {
+            cyclesToCalculate = _config.totalMonths;
+        }
+
+        uint256 totalExpected = monthlyContribution * cyclesToCalculate;
+
+        if (amountPaid >= totalExpected) {
+            return (amountPaid, 0, 0);
+        }
+
+        amountDue = totalExpected - amountPaid;
+        missedCycles = amountDue / monthlyContribution;
+    }
+
+    /**
+     * @dev Validates configuration parameters
+     * @param config_ Configuration to validate
+     */
+    function _validateConfig(NatilleraConfig calldata config_) private pure {
+        // Validate token address (can be zero for native)
+        if (config_.token != address(0)) {
+            // Additional ERC20 validation could be added here
+        }
+
+        // Validate contribution amount
+        if (config_.monthlyContribution < MIN_CONTRIBUTION) {
+            revert Natillera_InvalidConfig();
+        }
+        if (config_.monthlyContribution > MAX_CONTRIBUTION) {
+            revert Natillera_InvalidConfig();
+        }
+
+        // Validate total months
+        if (config_.totalMonths < MIN_TOTAL_MONTHS) {
+            revert Natillera_InvalidConfig();
+        }
+        if (config_.totalMonths > MAX_TOTAL_MONTHS) {
+            revert Natillera_InvalidConfig();
+        }
+
+        // Validate max members
+        if (config_.maxMembers == 0) {
+            revert Natillera_InvalidConfig();
+        }
+        if (config_.maxMembers > ABSOLUTE_MAX_MEMBERS) {
+            revert Natillera_InvalidConfig();
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                RECEIVE
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Allows the contract to receive ETH
+     * @dev Required for native token deposits
+     */
+    receive() external payable {}
 }

@@ -450,8 +450,11 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         uint256 value
     ) external override onlyOwner {
         if (parameter == PARAM_FEE_NATILLERA) {
+            // Flat fee in native token (cap to avoid absurd values)
+            if (value > 100 ether) revert Platform_InvalidParameter();
             _platformParams.natilleraFee = value;
         } else if (parameter == PARAM_FEE_TOKENIZACION) {
+            // Percentage fee (basis points)
             if (value > MAX_FEE_BPS) revert Platform_InvalidParameter();
             _platformParams.tokenizationFee = value;
         } else if (parameter == PARAM_FEE_WITHDRAWAL) {
@@ -533,18 +536,15 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         address token,
         uint256 amount
     ) external onlyOwner nonReentrant {
-        require(
-            !tokenStatus[token],
-            "Platform: Cannot rescue registered tokens"
-        );
-        require(token != address(0), "Platform: Invalid token address");
+        if (token == address(0)) revert Platform_InvalidToken();
+        if (tokenStatus[token]) revert Platform_CannotRescueRegisteredToken();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
-        require(balance >= amount, "Platform: Insufficient balance");
+        if (balance < amount) revert Platform_BalanceZero();
 
         IERC20(token).safeTransfer(owner(), amount);
 
-        emit ERC20FeesWithdrawn(token, owner(), amount);
+        emit TokensRescued(token, owner(), amount);
     }
 
     /*///////////////////////////////////////////////////////////////
