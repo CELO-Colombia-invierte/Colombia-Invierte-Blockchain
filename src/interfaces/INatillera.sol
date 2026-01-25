@@ -63,6 +63,40 @@ interface INatillera is ITracking {
     event CycleAdvanced(uint256 oldCycle, uint256 newCycle, uint256 dueDate);
 
     /**
+     * @notice Emitted when multiple members are added in a batch
+     * @param members Array of added member addresses
+     */
+    event MembersAddedBatch(address[] members);
+
+    /**
+     * @notice Emitted when the natillera is finalized by the host
+     * @param totalCollected Total amount collected from members
+     * @param totalWithdrawable Total balance available for withdrawal (including yields)
+     */
+    event NatilleraFinalized(uint256 totalCollected, uint256 totalWithdrawable);
+
+    /**
+     * @notice Emitted when a member withdraws their share
+     * @param member Address of the member
+     * @param amount Amount withdrawn
+     */
+    event FundsWithdrawn(address member, uint256 amount);
+    
+    /**
+     * @notice Emitted when multiple members are added in a batch
+     * @param members Array of added member addresses
+     */
+    event MembersAddedBatch(address[] members);
+
+    /**
+     * @notice Emitted when a payout is executed for a cycle
+     * @param cycleId The cycle number for this payout
+     * @param recipient The address receiving the payout
+     * @param amount The amount paid out
+     */
+    event PayoutExecuted(uint256 cycleId, address recipient, uint256 amount);
+
+    /**
      * @notice Emitted when natillera is initialized
      * @param projectId Project ID from platform
      * @param creator Creator address
@@ -178,6 +212,43 @@ interface INatillera is ITracking {
      * @param member Address to add
      */
     function addMember(address member) external;
+
+    /**
+     * @notice Adds multiple members to the natillera in a single transaction
+     * @dev Only owner can add members. Used for Host-Driven Sync.
+     * @param members Array of addresses to add
+     */
+    function batchAddMembers(address[] calldata members) external;
+
+    /**
+     * @notice Finalizes the natillera cycle, stopping deposits and enabling withdrawals
+     * @dev Only owner (Host) can finalize.
+     */
+    function finalize() external;
+
+    /**
+     * @notice Allows a member to withdraw their proportional share after finalization
+     * @dev Follows Pull Payment pattern.
+     */
+    function withdraw() external;
+
+    /**
+     * @notice Adds multiple members to the natillera in a single transaction
+     * @dev Only owner can add members
+     * @dev Used for Host-Driven Sync from backend
+     * @param members Array of addresses to add
+     */
+    function batchAddMembers(address[] calldata members) external;
+
+    /**
+     * @notice Executes a payout to a specific recipient (Cycle Winner)
+     * @dev Only owner can execute payouts (Host-Driven Payout)
+     * @dev Critical for MVP as ROSCA winner logic is off-chain
+     * @param cycleId Cycle number to track payments
+     * @param recipient Address to receive funds
+     * @param amount Amount to transfer
+     */
+    function payout(uint256 cycleId, address payable recipient, uint256 amount) external;
 
     /*//////////////////////////////////////////////////////////////
                             EMERGENCY FUNCTIONS

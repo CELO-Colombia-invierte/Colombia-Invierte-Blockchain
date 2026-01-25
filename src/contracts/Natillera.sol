@@ -82,6 +82,12 @@ contract Natillera is
     /// @notice Total amount withdrawn by members
     uint256 private _totalWithdrawn;
 
+    /// @notice Flag indicating if the natillera cycle is finalized
+    bool public finalized;
+
+    /// @notice Tracks members who have claimed their final share
+    mapping(address => bool) public rewardsClaimed;
+
     /*//////////////////////////////////////////////////////////////
                                 MODIFIERS
     //////////////////////////////////////////////////////////////*/
@@ -221,6 +227,7 @@ contract Natillera is
         whenActive
         validAmount(msg.value)
     {
+        if (finalized) revert Natillera_ContractPaused(); // Block deposits if finalized
         _processDeposit(msg.sender, 1, msg.value);
     }
 
@@ -240,6 +247,7 @@ contract Natillera is
         whenActive
         validAmount(msg.value)
     {
+        if (finalized) revert Natillera_ContractPaused(); // Block deposits if finalized
         if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) {
             revert Natillera_InvalidCycles();
         }
@@ -265,6 +273,97 @@ contract Natillera is
         IPlatform(platform()).addUserToProject(projectId(), member);
 
         emit MemberAdded(member, block.timestamp);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     */
+    function batchAddMembers(
+        address[] calldata newMembers
+    ) external override onlyOwner whenActive {
+        if (finalized) revert Natillera_ContractPaused(); // Cannot add members if finalized
+        
+        uint256 count = newMembers.length;
+        if (count > 50) revert Natillera_InvalidConfig();
+
+        address[] memory addedMembers = new address[](count);
+        uint256 addedCount = 0;
+
+        for (uint256 i = 0; i < count; ) {
+            address member = newMembers[i];
+            if (member != address(0) && member != address(this) && !_isMember[member]) {
+                if (_members.length < _config.maxMembers) {
+                    _isMember[member] = true;
+                    _members.push(member);
+                    IPlatform(platform()).addUserToProject(projectId(), member);
+                    addedMembers[addedCount] = member;
+                    addedCount++;
+                }
+            }
+            unchecked { ++i; }
+        }
+
+        address[] memory finalAdded = new address[](addedCount);
+        for(uint256 j=0; j<addedCount; j++){
+            finalAdded[j] = addedMembers[j];
+        }
+        
+        if (addedCount > 0) {
+            emit MembersAddedBatch(finalAdded);
+        }
+    }
+
+    /**
+     * @inheritdoc INatillera
+     */
+    function finalize() external override onlyOwner {
+        if (finalized) revert Natillera_ContractPaused(); // Already finalized
+        
+        finalized = true;
+        uint256 totalBalance = address(this).balance;
+        
+        if (_config.token != address(0)) {
+            totalBalance = IERC20(_config.token).balanceOf(address(this));
+        }
+
+        emit NatilleraFinalized(_totalCollected, totalBalance);
+        _pause(); // Pause contract to strict safety
+    }
+
+    /**
+     * @inheritdoc INatillera
+     */
+    function withdraw() external override nonReentrant {
+        if (!finalized) revert Natillera_ContractNotPaused(); // Not finalized yet
+        if (rewardsClaimed[msg.sender]) revert Natillera_InvalidDeposit(); // Already claimed (reuse error)
+        if (!_isMember[msg.sender]) revert Natillera_NotMember();
+
+        uint256 depositBalance = _deposits[msg.sender];
+        if (depositBalance == 0) revert Natillera_InvalidDeposit();
+
+        // Calculate Share: (UserDeposit * TotalAvailable) / TotalCollected
+        // TotalAvailable includes original deposits + any external yields/transfers
+        uint256 totalAvailable = address(this).balance; 
+        if (_config.token != address(0)) {
+            totalAvailable = IERC20(_config.token).balanceOf(address(this));
+        }
+
+        // Precision check: if totalCollected is 0 (should not happen if depositBalance > 0), avoid div by 0
+        if (_totalCollected == 0) revert Natillera_InvalidConfig();
+
+        uint256 amountToReceive = (depositBalance * totalAvailable) / _totalCollected;
+
+        rewardsClaimed[msg.sender] = true;
+        _totalWithdrawn += amountToReceive;
+
+        if (_config.token == address(0)) {
+            (bool success, ) = payable(msg.sender).call{value: amountToReceive}("");
+            if (!success) revert Natillera_InvalidDeposit();
+        } else {
+            IERC20(_config.token).safeTransfer(msg.sender, amountToReceive);
+        }
+
+        emit FundsWithdrawn(msg.sender, amountToReceive);
     }
 
     /*//////////////////////////////////////////////////////////////
