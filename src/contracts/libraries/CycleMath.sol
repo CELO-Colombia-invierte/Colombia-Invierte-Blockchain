@@ -5,9 +5,10 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title CycleMath
- * @dev Library for precise cycle calculations with overflow protection
- * @notice Handles 30-day cycle calculations with configurable precision
  * @author K-Labs
+ * @notice Library for precise 30-day cycle calculations with overflow protection
+ * @dev Handles cycle synchronization, duration calculations, and timestamp validations
+ * @custom:precision Uses 30-day months (2,592,000 seconds) for consistent cycle calculations
  */
 library CycleMath {
     using SafeCast for uint256;
@@ -16,27 +17,46 @@ library CycleMath {
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Seconds in a standard 30-day month
+    /// @notice Seconds in a standard 30-day month (2,592,000 seconds)
     uint256 internal constant SECONDS_PER_CYCLE = 30 days;
 
-    /// @dev Maximum cycles to calculate in one operation (10 years)
+    /// @notice Maximum cycles to calculate in one synchronization (10 years)
     uint256 internal constant MAX_CYCLES_CALC = 120;
 
-    /// @dev Precision factor for fractional calculations (1e18)
+    /// @notice Precision factor for fractional calculations (1e18)
     uint256 internal constant PRECISION = 1e18;
 
-    /// @dev Maximum safe timestamp (year 2106)
+    /// @notice Maximum safe timestamp (year 2106 to avoid overflow issues)
     uint256 internal constant MAX_TIMESTAMP = 2 ** 62 - 1;
+
+    /*//////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Current timestamp is before the base timestamp
+    error CurrentBeforeBase();
+
+    /// @notice Timestamp exceeds maximum safe value
+    error TimestampTooLarge();
+
+    /// @notice Invalid timestamp range (end before start)
+    error InvalidRange();
+
+    /// @notice Multiplication overflow in cycle calculation
+    error MultiplicationOverflow();
+
+    /// @notice Addition overflow in timestamp calculation
+    error AdditionOverflow();
 
     /*//////////////////////////////////////////////////////////////
                                 STRUCTS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Cycle state structure
-     * @param currentCycle Current cycle number
-     * @param cycleDueDate Due date of current cycle
-     * @param baseTimestamp Base timestamp for cycle 0
+     * @notice Cycle state tracking structure
+     * @param currentCycle Current 30-day cycle number (0-indexed)
+     * @param cycleDueDate Unix timestamp when current cycle contributions are due
+     * @param baseTimestamp Unix timestamp for cycle 0 start
      */
     struct CycleState {
         uint256 currentCycle;
@@ -45,30 +65,30 @@ library CycleMath {
     }
 
     /*//////////////////////////////////////////////////////////////
-                                CYCLE CALCULATIONS
+                            CYCLE SYNCHRONIZATION
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Synchronizes cycle state based on current timestamp
-     * @param state Cycle state to update
-     * @param currentTime Current block timestamp
+     * @notice Synchronizes cycle state based on current timestamp
+     * @dev Updates cycle number and due date if current time has passed cycle due date
+     * @dev Limits cycle advancement to prevent unbounded gas consumption
+     * @param state Cycle state storage reference to update
+     * @param currentTime Current block timestamp to synchronize against
      */
     function syncCycle(CycleState storage state, uint256 currentTime) internal {
+        // Early return if still within current cycle grace period
         if (currentTime <= state.cycleDueDate + SECONDS_PER_CYCLE) {
             return;
         }
 
-        // Validate timestamp range
-        require(
-            currentTime >= state.baseTimestamp,
-            "CycleMath: current before base"
-        );
-        require(currentTime <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        // Validate timestamp is after base and within safe range
+        if (currentTime < state.baseTimestamp) revert CurrentBeforeBase();
+        if (currentTime > MAX_TIMESTAMP) revert TimestampTooLarge();
 
-        // Calculate elapsed time safely
+        // Calculate elapsed time since base timestamp
         uint256 elapsed = currentTime - state.baseTimestamp;
 
-        // Calculate new cycle
+        // Calculate new cycle number based on elapsed time
         uint256 newCycle = elapsed / SECONDS_PER_CYCLE;
 
         // Limit cycle advancement to prevent unbounded loops
@@ -76,133 +96,130 @@ library CycleMath {
             newCycle = state.currentCycle + MAX_CYCLES_CALC;
         }
 
-        // Update state if cycle advanced
+        // Update state only if cycle has actually advanced
         if (newCycle > state.currentCycle) {
             state.currentCycle = newCycle;
 
-            // Calculate new due date with overflow check
+            // Calculate new due date with overflow protection
             uint256 dueDate = state.baseTimestamp +
                 (SECONDS_PER_CYCLE * newCycle);
-            require(dueDate >= state.baseTimestamp, "CycleMath: overflow");
+            if (dueDate < state.baseTimestamp) revert AdditionOverflow();
 
             state.cycleDueDate = dueDate;
         }
     }
 
+    /*//////////////////////////////////////////////////////////////
+                            CYCLE CALCULATIONS
+    //////////////////////////////////////////////////////////////*/
+
     /**
-     * @dev Calculates cycles between two timestamps
-     * @param fromTimestamp Start timestamp
-     * @param toTimestamp End timestamp
-     * @return cycles Number of complete cycles
+     * @notice Calculates number of complete cycles between two timestamps
+     * @dev Returns floor(elapsed / SECONDS_PER_CYCLE)
+     * @param fromTimestamp Start timestamp (inclusive)
+     * @param toTimestamp End timestamp (exclusive)
+     * @return cycles Number of complete 30-day cycles between timestamps
      */
     function calculateCyclesBetween(
         uint256 fromTimestamp,
         uint256 toTimestamp
     ) internal pure returns (uint256 cycles) {
-        require(toTimestamp >= fromTimestamp, "CycleMath: invalid range");
-        require(toTimestamp <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        if (toTimestamp < fromTimestamp) revert InvalidRange();
+        if (toTimestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
 
         uint256 elapsed = toTimestamp - fromTimestamp;
         cycles = elapsed / SECONDS_PER_CYCLE;
     }
 
     /**
-     * @dev Calculates cycles between timestamps with fractional precision
+     * @notice Calculates fractional cycles between timestamps with high precision
+     * @dev Returns (elapsed * PRECISION) / SECONDS_PER_CYCLE for fractional calculations
      * @param fromTimestamp Start timestamp
      * @param toTimestamp End timestamp
-     * @return cycles Number of cycles with PRECISION precision
+     * @return cycles Fractional cycles with PRECISION (1e18) precision
      */
     function calculateCyclesBetweenPrecise(
         uint256 fromTimestamp,
         uint256 toTimestamp
     ) internal pure returns (uint256 cycles) {
-        require(toTimestamp >= fromTimestamp, "CycleMath: invalid range");
-        require(toTimestamp <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        if (toTimestamp < fromTimestamp) revert InvalidRange();
+        if (toTimestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
 
         uint256 elapsed = toTimestamp - fromTimestamp;
-
-        // Calculate with precision: elapsed * PRECISION / SECONDS_PER_CYCLE
         cycles = (elapsed * PRECISION) / SECONDS_PER_CYCLE;
     }
 
     /**
-     * @dev Adds cycles to a timestamp
-     * @param timestamp Base timestamp
-     * @param cycles Number of cycles to add
-     * @return newTimestamp Resulting timestamp
+     * @notice Adds specified number of cycles to a base timestamp
+     * @dev Calculates: baseTimestamp + (cycles * SECONDS_PER_CYCLE)
+     * @param timestamp Base timestamp to add cycles to
+     * @param cycles Number of 30-day cycles to add
+     * @return newTimestamp Resulting timestamp after adding cycles
      */
     function addCycles(
         uint256 timestamp,
         uint256 cycles
     ) internal pure returns (uint256 newTimestamp) {
-        require(timestamp <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        if (timestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
 
         // Calculate seconds to add with overflow check
         uint256 secondsToAdd = cycles * SECONDS_PER_CYCLE;
-        require(
-            secondsToAdd / cycles == SECONDS_PER_CYCLE,
-            "CycleMath: multiplication overflow"
-        );
+        if (secondsToAdd / cycles != SECONDS_PER_CYCLE)
+            revert MultiplicationOverflow();
 
         // Check addition overflow
-        require(
-            timestamp <= type(uint256).max - secondsToAdd,
-            "CycleMath: addition overflow"
-        );
+        if (timestamp > type(uint256).max - secondsToAdd)
+            revert AdditionOverflow();
 
         newTimestamp = timestamp + secondsToAdd;
     }
 
     /**
-     * @dev Calculates due date for a specific cycle
+     * @notice Calculates due date for a specific cycle number
+     * @dev Calculates: baseTimestamp + (cycleNumber * SECONDS_PER_CYCLE)
      * @param baseTimestamp Base timestamp for cycle 0
-     * @param cycleNumber Cycle number
-     * @return dueDate Due date for the cycle
+     * @param cycleNumber Cycle number to calculate due date for
+     * @return dueDate Unix timestamp when the specified cycle is due
      */
     function calculateDueDate(
         uint256 baseTimestamp,
         uint256 cycleNumber
     ) internal pure returns (uint256 dueDate) {
-        require(
-            baseTimestamp <= MAX_TIMESTAMP,
-            "CycleMath: timestamp too large"
-        );
+        if (baseTimestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
 
         dueDate = baseTimestamp + (cycleNumber * SECONDS_PER_CYCLE);
-        require(dueDate >= baseTimestamp, "CycleMath: overflow");
+        if (dueDate < baseTimestamp) revert AdditionOverflow();
     }
 
     /*//////////////////////////////////////////////////////////////
-                                VALIDATION
+                            VALIDATION FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Validates that a timestamp is within acceptable range
-     * @param timestamp Timestamp to validate
+     * @notice Validates that a timestamp is within acceptable range
+     * @dev Prevents timestamp values that could cause overflow in calculations
+     * @param timestamp Unix timestamp to validate
      */
     function validateTimestamp(uint256 timestamp) internal pure {
-        require(timestamp <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        if (timestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
     }
 
     /**
-     * @dev Validates that cycles can be safely added to timestamp
-     * @param timestamp Base timestamp
-     * @param cycles Number of cycles
+     * @notice Validates that cycles can be safely added to a timestamp
+     * @dev Checks both multiplication and addition overflow scenarios
+     * @param timestamp Base timestamp to validate
+     * @param cycles Number of cycles to validate addition for
      */
     function validateCycleAddition(
         uint256 timestamp,
         uint256 cycles
     ) internal pure {
-        require(timestamp <= MAX_TIMESTAMP, "CycleMath: timestamp too large");
+        if (timestamp > MAX_TIMESTAMP) revert TimestampTooLarge();
 
         uint256 secondsToAdd = cycles * SECONDS_PER_CYCLE;
-        require(
-            secondsToAdd / cycles == SECONDS_PER_CYCLE,
-            "CycleMath: multiplication overflow"
-        );
-        require(
-            timestamp <= type(uint256).max - secondsToAdd,
-            "CycleMath: addition overflow"
-        );
+        if (secondsToAdd / cycles != SECONDS_PER_CYCLE)
+            revert MultiplicationOverflow();
+        if (timestamp > type(uint256).max - secondsToAdd)
+            revert AdditionOverflow();
     }
 }

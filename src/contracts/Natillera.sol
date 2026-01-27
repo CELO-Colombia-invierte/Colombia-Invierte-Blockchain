@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
@@ -14,10 +14,12 @@ import {IPlatform} from "interfaces/IPlatform.sol";
 
 /**
  * @title Natillera
- * @dev Savings pool contract implementing rotating savings and credit association
- * @notice Members make regular monthly contributions in 30-day cycles
  * @author K-Labs
- * @dev Uses upgradeable pattern for potential future improvements
+ * @notice Savings pool with proportional distribution at maturity
+ * @dev Implements the "Pool de Ahorros" model: monthly contributions accumulate,
+ *      distributed proportionally at the end based on individual contributions
+ * @custom:features Monthly cycles, overpayment credits, external yield deposits,
+ *                  emergency withdrawals, auto-finalization
  */
 contract Natillera is
     Initializable,
@@ -33,23 +35,29 @@ contract Natillera is
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Maximum cycles that can be paid in advance (1 year)
+    /// @notice Maximum cycles that can be paid in advance (1 year)
     uint256 private constant MAX_ADVANCE_CYCLES = 12;
 
-    /// @dev Minimum monthly contribution (0.001 ETH or equivalent)
+    /// @notice Minimum monthly contribution (0.001 ETH or equivalent)
     uint256 private constant MIN_CONTRIBUTION = 1e15;
 
-    /// @dev Maximum monthly contribution (1000 ETH or equivalent)
+    /// @notice Maximum monthly contribution (1000 ETH or equivalent)
     uint256 private constant MAX_CONTRIBUTION = 1000 ether;
 
-    /// @dev Maximum number of members (safety limit)
-    uint256 private constant ABSOLUTE_MAX_MEMBERS = 200;
+    /// @notice Absolute maximum number of members (safety limit)
+    uint256 private constant MAX_MEMBERS = 200;
 
-    /// @dev Maximum total months for natillera duration (5 years)
+    /// @notice Maximum pool duration in months (5 years)
     uint256 private constant MAX_TOTAL_MONTHS = 60;
 
-    /// @dev Minimum total months for natillera duration (3 months)
+    /// @notice Minimum pool duration in months (3 months)
     uint256 private constant MIN_TOTAL_MONTHS = 3;
+
+    /// @notice Delay before emergency withdrawal becomes available (90 days)
+    uint256 private constant EMERGENCY_DELAY = 90 days;
+
+    /// @notice Credit expiry period (1 year)
+    uint256 private constant CREDIT_EXPIRY_PERIOD = 365 days;
 
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
@@ -61,39 +69,61 @@ contract Natillera is
     /// @inheritdoc INatillera
     uint256 public override cycleDueDate;
 
-    /// @notice Cycle state managed by CycleMath library
+    /// @inheritdoc INatillera
+    bool public override finalized;
+
+    /// @notice Internal cycle state managed by CycleMath library
     CycleMath.CycleState private _cycleState;
 
-    /// @notice Natillera configuration
+    /// @notice Pool configuration parameters
     NatilleraConfig private _config;
 
-    /// @notice Member deposits tracking
-    mapping(address => uint256) private _deposits;
+    /// @inheritdoc INatillera
+    mapping(address => uint256) public override depositBalance;
 
     /// @notice Membership status tracking
     mapping(address => bool) private _isMember;
 
-    /// @notice Array of all member addresses
+    /// @inheritdoc INatillera
+    mapping(address => bool) public override rewardsClaimed;
+
+    /// @inheritdoc INatillera
+    mapping(address => uint256) public override credits;
+
+    /// @notice Credit expiry timestamps
+    mapping(address => uint256) public override creditExpiry;
+
+    /// @notice List of all member addresses
     address[] private _members;
 
-    /// @notice Total amount collected across all members
-    uint256 private _totalCollected;
+    /// @inheritdoc INatillera
+    uint256 public override totalCollected;
 
-    /// @notice Total amount withdrawn by members
-    uint256 private _totalWithdrawn;
+    /// @inheritdoc INatillera
+    uint256 public override totalWithdrawn;
 
-    /// @notice Flag indicating if the natillera cycle is finalized
-    bool public finalized;
+    /// @inheritdoc INatillera
+    uint256 public override totalYieldDeposited;
 
-    /// @notice Tracks members who have claimed their final share
-    mapping(address => bool) public rewardsClaimed;
+    /// @inheritdoc INatillera
+    uint256 public override totalYieldDistributed;
+
+    /// @notice Yield claimed per member (for internal tracking)
+    mapping(address => uint256) private _yieldClaimed;
+
+    /// @notice Last activity timestamp per member (for emergency withdrawal)
+    mapping(address => uint256) private _lastActivity;
+
+    /// @notice Last owner action timestamp (for emergency withdrawal validation)
+    uint256 private _lastOwnerAction;
 
     /*//////////////////////////////////////////////////////////////
                                 MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Ensures cycle is synchronized before execution
+     * @dev Ensures cycle is synchronized with current timestamp before execution
+     * @dev Automatically advances cycle and triggers auto-finalization if needed
      */
     modifier syncCycle() {
         _syncCycle();
@@ -101,38 +131,18 @@ contract Natillera is
     }
 
     /**
-     * @dev Restricts access to members only
+     * @dev Restricts function access to pool members only
      */
     modifier onlyMember() {
-        if (!_isMember[msg.sender]) revert Natillera_NotMember();
+        if (!_isMember[msg.sender]) revert NotMember();
         _;
     }
 
     /**
-     * @dev Restricts access when contract is active (not paused)
+     * @dev Restricts function access when contract is not paused
      */
     modifier whenActive() {
-        if (paused()) revert Natillera_ContractPaused();
-        _;
-    }
-
-    /**
-     * @dev Validates member address
-     */
-    modifier validMember(address member) {
-        if (member == address(0)) revert Natillera_InvalidMember();
-        if (member == address(this)) revert Natillera_InvalidMember();
-        _;
-    }
-
-    /**
-     * @dev Validates contribution amount
-     */
-    modifier validAmount(uint256 amount) {
-        if (amount == 0) revert Natillera_InvalidDeposit();
-        if (amount > MAX_CONTRIBUTION * MAX_ADVANCE_CYCLES) {
-            revert Natillera_InvalidDeposit();
-        }
+        if (paused()) revert ContractPaused();
         _;
     }
 
@@ -142,46 +152,43 @@ contract Natillera is
 
     /**
      * @inheritdoc INatillera
-     * @notice Initializes the Natillera contract
-     * @dev Sets up configuration, ownership, and initial state
+     * @dev Validates configuration parameters and sets up initial state
+     * @dev The governanceConfig parameter is reserved for future use
      */
     function initialize(
         uint256 startTimestamp,
         NatilleraConfig calldata natilleraConfig,
-        IPlatform.GovernanceConfig calldata governanceConfig,
+        IPlatform.GovernanceConfig calldata,
         IPlatform.ProjectConfig calldata projectConfig
-    ) external override initializer notInitialized {
-        // Validate start timestamp
-        if (startTimestamp <= block.timestamp) revert Natillera_InvalidStart();
-        if (startTimestamp > block.timestamp + 365 days) {
-            revert Natillera_InvalidStart();
-        }
+    ) external override initializer {
+        // Validate start timestamp is in reasonable future
+        if (startTimestamp <= block.timestamp) revert InvalidStart();
+        if (startTimestamp > block.timestamp + 365 days) revert InvalidStart();
 
-        // Validate configuration
+        // Validate configuration parameters
         _validateConfig(natilleraConfig);
 
-        // Initialize Tracking with project information
+        // Initialize parent contracts
         __Tracking_init(
             projectConfig.platform,
             projectConfig.projectId,
             projectConfig.creator
         );
-
-        // Initialize other parent contracts
         __ReentrancyGuard_init();
         __Pausable_init();
 
-        // Initialize base timestamp (one cycle before start)
-        _cycleState.baseTimestamp =
-            startTimestamp -
-            CycleMath.SECONDS_PER_CYCLE;
-        CycleMath.validateTimestamp(_cycleState.baseTimestamp);
-
-        // Store configuration
+        // Set up cycle state (cycle 0 starts at startTimestamp)
+        _cycleState.baseTimestamp = startTimestamp;
         _config = natilleraConfig;
 
-        // Initialize first cycle
-        _syncCycle();
+        // Initialize first cycle (due in 30 days)
+        _cycleState.currentCycle = 0;
+        _cycleState.cycleDueDate = startTimestamp + CycleMath.SECONDS_PER_CYCLE;
+        cycle = _cycleState.currentCycle;
+        cycleDueDate = _cycleState.cycleDueDate;
+
+        // Initialize owner activity tracker
+        _lastOwnerAction = block.timestamp;
 
         emit NatilleraInitialized(
             projectConfig.projectId,
@@ -193,29 +200,12 @@ contract Natillera is
     }
 
     /*//////////////////////////////////////////////////////////////
-                            CORE LOGIC
+                            CORE CONTRIBUTION LOGIC
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc INatillera
-     * @notice Tracks a member's contribution status
-     */
-    function trackContribution(
-        address member
-    )
-        external
-        override
-        syncCycle
-        validMember(member)
-        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
-    {
-        if (!_isMember[member]) revert Natillera_NotMember();
-        return _calculateContribution(member);
-    }
-
-    /**
-     * @inheritdoc INatillera
-     * @notice Allows a member to deposit for a single cycle
+     * @dev Automatically syncs cycle, validates amount, processes deposit
      */
     function depositSingleCycle()
         external
@@ -225,174 +215,333 @@ contract Natillera is
         syncCycle
         nonReentrant
         whenActive
-        validAmount(msg.value)
     {
-        if (finalized) revert Natillera_ContractPaused(); // Block deposits if finalized
-        _processDeposit(msg.sender, 1, msg.value);
+        if (finalized) revert PoolFinalized();
+
+        uint256 monthlyContribution = _config.monthlyContribution;
+        if (msg.value != monthlyContribution) revert InvalidDeposit();
+
+        // Validate single cycle payment doesn't exceed due amount
+        (, uint256 amountDue, ) = _calculateContribution(msg.sender);
+        if (msg.value > amountDue) revert OverPayment();
+
+        _processDeposit(msg.sender, 1, msg.value, 0);
+        _updateActivity(msg.sender);
     }
 
     /**
      * @inheritdoc INatillera
-     * @notice Allows a member to deposit for multiple cycles
+     * @dev Validates cycles parameter is within allowed range
+     * @dev Allows overpayment for advance cycles
      */
     function depositMultipleCycles(
         uint256 cycles
-    )
+    ) external payable override onlyMember syncCycle nonReentrant whenActive {
+        if (finalized) revert PoolFinalized();
+        if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) revert InvalidCycles();
+
+        uint256 monthlyContribution = _config.monthlyContribution;
+        uint256 expectedAmount = monthlyContribution * cycles;
+
+        if (msg.value != expectedAmount) revert InvalidDeposit();
+
+        // For multiple cycles, validate against total pool capacity
+        uint256 totalCapacity = monthlyContribution * _config.totalMonths;
+        uint256 newTotal = depositBalance[msg.sender] + msg.value;
+        if (newTotal > totalCapacity) revert OverPayment();
+
+        _processDeposit(msg.sender, cycles, msg.value, 0);
+        _updateActivity(msg.sender);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @dev Excess payment above exact amount is stored as credit for future use
+     */
+    function depositWithOverpayment(
+        uint256 cycles
+    ) external payable override onlyMember syncCycle nonReentrant whenActive {
+        if (finalized) revert PoolFinalized();
+        if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) revert InvalidCycles();
+
+        uint256 monthlyContribution = _config.monthlyContribution;
+        uint256 exactAmount = monthlyContribution * cycles;
+
+        if (msg.value < exactAmount) revert InvalidDeposit();
+
+        // Validate total doesn't exceed pool capacity
+        uint256 totalCapacity = monthlyContribution * _config.totalMonths;
+        uint256 newTotal = depositBalance[msg.sender] + exactAmount;
+        if (newTotal > totalCapacity) revert OverPayment();
+
+        _processDeposit(msg.sender, cycles, exactAmount, 0);
+
+        uint256 overpayment = msg.value - exactAmount;
+        if (overpayment > 0) {
+            credits[msg.sender] += overpayment;
+            creditExpiry[msg.sender] = block.timestamp + CREDIT_EXPIRY_PERIOD;
+            emit OverpaymentDeposited(msg.sender, overpayment);
+        }
+
+        _updateActivity(msg.sender);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @dev Uses credit balance to cover one monthly contribution
+     * @dev Validates credit hasn't expired
+     */
+    function useCreditForCycle()
         external
-        payable
         override
         onlyMember
         syncCycle
         nonReentrant
         whenActive
-        validAmount(msg.value)
     {
-        if (finalized) revert Natillera_ContractPaused(); // Block deposits if finalized
-        if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) {
-            revert Natillera_InvalidCycles();
+        if (finalized) revert PoolFinalized();
+
+        // Check credit expiry
+        if (creditExpiry[msg.sender] < block.timestamp) {
+            credits[msg.sender] = 0;
+            revert CreditExpired();
         }
-        _processDeposit(msg.sender, cycles, msg.value);
+
+        uint256 monthlyContribution = _config.monthlyContribution;
+        if (credits[msg.sender] < monthlyContribution)
+            revert InsufficientCredit();
+
+        credits[msg.sender] -= monthlyContribution;
+        _processDeposit(
+            msg.sender,
+            1,
+            monthlyContribution,
+            monthlyContribution
+        );
+
+        emit CreditUsed(msg.sender, monthlyContribution);
+        _updateActivity(msg.sender);
     }
 
     /**
      * @inheritdoc INatillera
-     * @notice Adds a new member to the natillera
+     * @dev Only owner can deposit yield from external sources
+     * @dev Yield is added to pool for proportional distribution at maturity
      */
-    function addMember(
-        address member
-    ) external override onlyOwner whenActive validMember(member) {
-        if (_isMember[member]) revert Natillera_AlreadyMember();
-        if (_members.length >= _config.maxMembers) {
-            revert Natillera_MaxMembersReached();
-        }
+    function depositYield() external payable override onlyOwner nonReentrant {
+        if (finalized) revert PoolFinalized();
+        if (msg.value == 0) revert NoYield();
+        if (_config.token != address(0)) revert InvalidYieldToken();
+
+        totalYieldDeposited += msg.value;
+        _lastOwnerAction = block.timestamp;
+
+        emit YieldDeposited(msg.sender, msg.value);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @dev Transfers ERC20 tokens from owner to pool as yield
+     */
+    function depositYieldERC20(
+        uint256 amount
+    ) external override onlyOwner nonReentrant {
+        if (finalized) revert PoolFinalized();
+        if (amount == 0) revert NoYield();
+        if (_config.token == address(0)) revert InvalidYieldToken();
+
+        IERC20(_config.token).safeTransferFrom(
+            msg.sender,
+            address(this),
+            amount
+        );
+        totalYieldDeposited += amount;
+        _lastOwnerAction = block.timestamp;
+
+        emit YieldDepositedERC20(msg.sender, _config.token, amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            ADMINISTRATIVE FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
+     * @dev Registers new member with the platform and tracks membership
+     */
+    function addMember(address member) external override onlyOwner whenActive {
+        if (member == address(0) || member == address(this))
+            revert InvalidMember();
+        if (_isMember[member]) revert AlreadyMember();
+        if (_members.length >= _config.maxMembers) revert MaxMembersReached();
 
         _isMember[member] = true;
         _members.push(member);
+        _lastActivity[member] = block.timestamp;
+        _lastOwnerAction = block.timestamp;
 
-        // Register member with platform
         IPlatform(platform()).addUserToProject(projectId(), member);
-
-        emit MemberAdded(member, block.timestamp);
+        emit MemberAdded(member);
     }
 
     /**
      * @inheritdoc INatillera
+     * @dev More gas-efficient than adding members individually
+     * @dev Skips invalid addresses and existing members
      */
     function batchAddMembers(
         address[] calldata newMembers
     ) external override onlyOwner whenActive {
-        if (finalized) revert Natillera_ContractPaused(); // Cannot add members if finalized
-        
-        uint256 count = newMembers.length;
-        if (count > 50) revert Natillera_InvalidConfig();
+        if (finalized) revert PoolFinalized();
 
+        uint256 count = newMembers.length;
         address[] memory addedMembers = new address[](count);
         uint256 addedCount = 0;
 
         for (uint256 i = 0; i < count; ) {
             address member = newMembers[i];
-            if (member != address(0) && member != address(this) && !_isMember[member]) {
+            if (
+                member != address(0) &&
+                member != address(this) &&
+                !_isMember[member]
+            ) {
                 if (_members.length < _config.maxMembers) {
                     _isMember[member] = true;
                     _members.push(member);
+                    _lastActivity[member] = block.timestamp;
                     IPlatform(platform()).addUserToProject(projectId(), member);
                     addedMembers[addedCount] = member;
                     addedCount++;
                 }
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
-        address[] memory finalAdded = new address[](addedCount);
-        for(uint256 j=0; j<addedCount; j++){
-            finalAdded[j] = addedMembers[j];
-        }
-        
         if (addedCount > 0) {
+            _lastOwnerAction = block.timestamp;
+            address[] memory finalAdded = new address[](addedCount);
+            for (uint256 j = 0; j < addedCount; j++) {
+                finalAdded[j] = addedMembers[j];
+            }
             emit MembersAddedBatch(finalAdded);
         }
     }
 
     /**
      * @inheritdoc INatillera
+     * @dev Also triggers auto-pause for added security
+     * @dev Auto-finalization also occurs when totalMonths is reached
      */
     function finalize() external override onlyOwner {
-        if (finalized) revert Natillera_ContractPaused(); // Already finalized
-        
+        if (finalized) revert PoolFinalized();
+
         finalized = true;
-        uint256 totalBalance = address(this).balance;
-        
-        if (_config.token != address(0)) {
-            totalBalance = IERC20(_config.token).balanceOf(address(this));
-        }
+        _lastOwnerAction = block.timestamp;
+        uint256 totalAvailable = _getTotalAvailable();
 
-        emit NatilleraFinalized(_totalCollected, totalBalance);
-        _pause(); // Pause contract to strict safety
-    }
-
-    /**
-     * @inheritdoc INatillera
-     */
-    function withdraw() external override nonReentrant {
-        if (!finalized) revert Natillera_ContractNotPaused(); // Not finalized yet
-        if (rewardsClaimed[msg.sender]) revert Natillera_InvalidDeposit(); // Already claimed (reuse error)
-        if (!_isMember[msg.sender]) revert Natillera_NotMember();
-
-        uint256 depositBalance = _deposits[msg.sender];
-        if (depositBalance == 0) revert Natillera_InvalidDeposit();
-
-        // Calculate Share: (UserDeposit * TotalAvailable) / TotalCollected
-        // TotalAvailable includes original deposits + any external yields/transfers
-        uint256 totalAvailable = address(this).balance; 
-        if (_config.token != address(0)) {
-            totalAvailable = IERC20(_config.token).balanceOf(address(this));
-        }
-
-        // Precision check: if totalCollected is 0 (should not happen if depositBalance > 0), avoid div by 0
-        if (_totalCollected == 0) revert Natillera_InvalidConfig();
-
-        uint256 amountToReceive = (depositBalance * totalAvailable) / _totalCollected;
-
-        rewardsClaimed[msg.sender] = true;
-        _totalWithdrawn += amountToReceive;
-
-        if (_config.token == address(0)) {
-            (bool success, ) = payable(msg.sender).call{value: amountToReceive}("");
-            if (!success) revert Natillera_InvalidDeposit();
-        } else {
-            IERC20(_config.token).safeTransfer(msg.sender, amountToReceive);
-        }
-
-        emit FundsWithdrawn(msg.sender, amountToReceive);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            EMERGENCY FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @inheritdoc INatillera
-     * @notice Pauses the natillera, stopping deposits and member additions
-     */
-    function pause() external override onlyOwner {
+        emit PoolFinalized(totalCollected, totalAvailable);
         _pause();
     }
 
     /**
      * @inheritdoc INatillera
-     * @notice Unpauses the natillera, resuming normal operations
+     */
+    function pause() external override onlyOwner {
+        _pause();
+        _lastOwnerAction = block.timestamp;
+    }
+
+    /**
+     * @inheritdoc INatillera
      */
     function unpause() external override onlyOwner {
         _unpause();
+        _lastOwnerAction = block.timestamp;
     }
 
     /*//////////////////////////////////////////////////////////////
-                                VIEWS
+                            MEMBER WITHDRAWAL LOGIC
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc INatillera
-     * @notice Returns array of all member addresses
+     * @dev Calculates capital share as exact deposit amount
+     * @dev Calculates yield share as: (memberDeposit / totalCollected) * availableYield
+     * @dev Can only be called once per member after finalization
+     */
+    function withdraw() external override nonReentrant {
+        if (!finalized) revert PoolNotFinalized();
+        if (rewardsClaimed[msg.sender]) revert AlreadyClaimed();
+        if (!_isMember[msg.sender]) revert NotMember();
+
+        uint256 memberDeposit = depositBalance[msg.sender];
+        if (memberDeposit == 0) revert InvalidDeposit();
+
+        (
+            uint256 capitalShare,
+            uint256 yieldShare
+        ) = _calculateProportionalShare(msg.sender);
+        uint256 totalToReceive = capitalShare + yieldShare;
+        if (totalToReceive == 0) revert InvalidDeposit();
+
+        rewardsClaimed[msg.sender] = true;
+        totalWithdrawn += capitalShare;
+        totalYieldDistributed += yieldShare;
+        _yieldClaimed[msg.sender] = yieldShare;
+
+        if (_config.token == address(0)) {
+            (bool success, ) = payable(msg.sender).call{value: totalToReceive}(
+                ""
+            );
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(_config.token).safeTransfer(msg.sender, totalToReceive);
+        }
+
+        emit FundsWithdrawn(msg.sender, capitalShare, yieldShare);
+    }
+
+    /**
+     * @inheritdoc INatillera
+     * @dev Available after 90 days of owner inactivity
+     * @dev WARNING: Reduces totalCollected, affecting proportional calculations for remaining members
+     * @dev Withdraws only capital contributions (no yield)
+     * @dev Intended as last resort when owner cannot finalize pool
+     */
+    function emergencyWithdraw() external override onlyMember nonReentrant {
+        if (finalized) revert PoolFinalized();
+
+        // Check emergency conditions
+        if (block.timestamp <= cycleDueDate + EMERGENCY_DELAY)
+            revert ContractNotPaused();
+        if (_hasOwnerBeenActive()) revert OwnerActive();
+
+        uint256 memberDeposit = depositBalance[msg.sender];
+        if (memberDeposit == 0) revert InvalidDeposit();
+
+        depositBalance[msg.sender] = 0;
+        totalCollected -= memberDeposit;
+
+        if (_config.token == address(0)) {
+            (bool success, ) = payable(msg.sender).call{value: memberDeposit}(
+                ""
+            );
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(_config.token).safeTransfer(msg.sender, memberDeposit);
+        }
+
+        emit EmergencyWithdrawal(msg.sender, memberDeposit);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @inheritdoc INatillera
      */
     function members() external view override returns (address[] memory) {
         return _members;
@@ -400,7 +549,6 @@ contract Natillera is
 
     /**
      * @inheritdoc INatillera
-     * @notice Returns the current configuration
      */
     function config() external view override returns (NatilleraConfig memory) {
         return _config;
@@ -408,17 +556,6 @@ contract Natillera is
 
     /**
      * @inheritdoc INatillera
-     * @notice Returns deposit balance for a specific member
-     */
-    function getDepositBalance(
-        address member
-    ) external view override returns (uint256) {
-        return _deposits[member];
-    }
-
-    /**
-     * @inheritdoc INatillera
-     * @notice Checks if an address is a member
      */
     function isMember(address account) external view override returns (bool) {
         return _isMember[account];
@@ -426,157 +563,156 @@ contract Natillera is
 
     /**
      * @inheritdoc INatillera
-     * @notice Returns total number of members
      */
-    function memberCount() external view override returns (uint256) {
-        return _members.length;
+    function hasEnded() external view override returns (bool) {
+        return cycle >= _config.totalMonths;
     }
 
     /**
-     * @notice Returns cycle information
-     * @return currentCycle Current cycle number
-     * @return dueDate Current cycle due date
-     * @return baseTimestamp Base timestamp for calculations
+     * @inheritdoc INatillera
+     * @dev Capital share is always exact deposit amount
+     * @dev Yield share is proportional based on contribution
      */
-    function getCycleInfo()
-        external
-        view
-        returns (uint256 currentCycle, uint256 dueDate, uint256 baseTimestamp)
-    {
-        return (
-            _cycleState.currentCycle,
-            _cycleState.cycleDueDate,
-            _cycleState.baseTimestamp
-        );
-    }
-
-    /**
-     * @notice Returns total collected amount
-     * @return Total amount collected from all members
-     */
-    function totalCollected() external view returns (uint256) {
-        return _totalCollected;
-    }
-
-    /**
-     * @notice Returns total withdrawn amount
-     * @return Total amount withdrawn by members
-     */
-    function totalWithdrawn() external view returns (uint256) {
-        return _totalWithdrawn;
-    }
-
-    /**
-     * @notice Returns available balance in contract
-     * @return Current contract balance
-     */
-    function availableBalance() external view returns (uint256) {
-        return address(this).balance;
-    }
-
-    /**
-     * @notice Calculates contribution status without state changes
-     * @param member Member address
-     * @return amountPaid Total amount paid
-     * @return amountDue Amount currently due
-     * @return missedCycles Number of cycles behind
-     */
-    function calculateContribution(
+    function calculateShare(
         address member
     )
         external
         view
-        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
+        override
+        returns (uint256 capitalShare, uint256 yieldShare, uint256 totalShare)
     {
-        if (!_isMember[member]) revert Natillera_NotMember();
-        return _calculateContributionView(member);
-    }
+        if (!_isMember[member] || depositBalance[member] == 0) {
+            return (0, 0, 0);
+        }
 
-    /**
-     * @notice Checks if natillera has ended based on total months
-     * @return True if natillera has ended, false otherwise
-     */
-    function hasEnded() external view returns (bool) {
-        return cycle >= _config.totalMonths;
+        uint256 memberDeposit = depositBalance[member];
+
+        // Capital is always exactly what was deposited
+        capitalShare = memberDeposit;
+
+        // Calculate yield share
+        if (!finalized) {
+            // Theoretical yield if pool ended now
+            if (totalYieldDeposited > 0 && totalCollected > 0) {
+                yieldShare =
+                    (memberDeposit * totalYieldDeposited) /
+                    totalCollected;
+            }
+        } else {
+            // Actual yield after finalization
+            uint256 totalYieldAvailable = totalYieldDeposited -
+                totalYieldDistributed;
+            if (totalYieldAvailable > 0 && totalCollected > 0) {
+                yieldShare =
+                    (memberDeposit * totalYieldAvailable) /
+                    totalCollected;
+            }
+        }
+
+        totalShare = capitalShare + yieldShare;
+
+        // Ensure we don't exceed available balance
+        uint256 totalAvailable = _getTotalAvailable();
+        if (totalShare > totalAvailable) {
+            // Adjust yield only, capital is fixed
+            uint256 maxYield = totalAvailable > capitalShare
+                ? totalAvailable - capitalShare
+                : 0;
+            yieldShare = yieldShare > maxYield ? maxYield : yieldShare;
+            totalShare = capitalShare + yieldShare;
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
-                            INTERNAL LOGIC
+                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Processes a deposit for specified number of cycles
+     * @dev Processes a deposit, validating amount and updating balances
      * @param member Address making the deposit
      * @param cycles Number of cycles being paid for
-     * @param amount Deposit amount
+     * @param amount Total amount being deposited
+     * @param fromCredit Amount being paid from credit balance (0 for cash payments)
      */
     function _processDeposit(
         address member,
         uint256 cycles,
-        uint256 amount
+        uint256 amount,
+        uint256 fromCredit
     ) internal {
-        uint256 monthlyContribution = _config.monthlyContribution;
+        bool isUpToDate = _isMemberUpToDate(member, amount);
 
-        // Calculate expected amount with overflow check
-        uint256 expectedAmount;
-        unchecked {
-            expectedAmount = monthlyContribution * cycles;
+        uint256 depositIncrease = amount - fromCredit;
+        if (depositIncrease > 0) {
+            depositBalance[member] += depositIncrease;
+            totalCollected += depositIncrease;
         }
-
-        // Validate payment amount matches expected
-        if (amount != expectedAmount) revert Natillera_InvalidDeposit();
-
-        // Calculate current due amount
-        (, uint256 amountDue, ) = _calculateContribution(member);
-
-        // Validate payment does not exceed due amount
-        if (amount > amountDue) revert Natillera_OverPayment();
-
-        bool isUpToDate = amount == amountDue;
-
-        // Update deposits with overflow check
-        uint256 newDepositAmount = _deposits[member] + amount;
-        require(
-            newDepositAmount >= _deposits[member],
-            "Natillera: deposit overflow"
-        );
-
-        // Update total collected
-        uint256 newTotalCollected = _totalCollected + amount;
-        require(
-            newTotalCollected >= _totalCollected,
-            "Natillera: total overflow"
-        );
-
-        _deposits[member] = newDepositAmount;
-        _totalCollected = newTotalCollected;
 
         emit Deposit(member, amount, cycles, isUpToDate);
     }
 
     /**
-     * @dev Synchronizes the current cycle based on timestamp
+     * @dev Synchronizes the current cycle with block timestamp
+     * @dev Automatically finalizes pool when totalMonths is reached
      */
     function _syncCycle() internal {
         uint256 oldCycle = cycle;
 
-        // Use CycleMath library for safe synchronization
         _cycleState.syncCycle(block.timestamp);
-
-        // Update public state variables
         cycle = _cycleState.currentCycle;
         cycleDueDate = _cycleState.cycleDueDate;
 
-        // Emit event if cycle advanced
+        // Auto-finalization when pool reaches its duration
+        if (cycle >= _config.totalMonths && !finalized) {
+            finalized = true;
+            uint256 totalAvailable = _getTotalAvailable();
+            emit PoolFinalized(totalCollected, totalAvailable);
+            _pause();
+        }
+
         if (cycle > oldCycle) {
             emit CycleAdvanced(oldCycle, cycle, cycleDueDate);
         }
     }
 
     /**
-     * @dev Calculates contribution status for a member
-     * @param member Address of the member
-     * @return amountPaid Total amount paid
+     * @dev Calculates proportional share for a member
+     * @param member Address to calculate share for
+     * @return capitalShare Member's exact capital deposit
+     * @return yieldShare Member's proportional share of yield
+     */
+    function _calculateProportionalShare(
+        address member
+    ) internal view returns (uint256 capitalShare, uint256 yieldShare) {
+        uint256 memberDeposit = depositBalance[member];
+
+        // Capital share is exactly what was deposited
+        capitalShare = memberDeposit;
+
+        // Calculate yield share proportionally
+        uint256 totalYieldAvailable = totalYieldDeposited -
+            totalYieldDistributed;
+        if (totalYieldAvailable > 0 && totalCollected > 0) {
+            yieldShare = (memberDeposit * totalYieldAvailable) / totalCollected;
+        }
+
+        // Ensure we don't exceed available balance
+        uint256 totalShare = capitalShare + yieldShare;
+        uint256 totalAvailable = _getTotalAvailable();
+
+        if (totalShare > totalAvailable) {
+            // Adjust yield only, capital is fixed
+            uint256 maxYield = totalAvailable > capitalShare
+                ? totalAvailable - capitalShare
+                : 0;
+            yieldShare = yieldShare > maxYield ? maxYield : yieldShare;
+        }
+    }
+
+    /**
+     * @dev Calculates current contribution status for a member
+     * @param member Address to check
+     * @return amountPaid Total amount paid by member
      * @return amountDue Amount currently due
      * @return missedCycles Number of cycles behind
      */
@@ -587,29 +723,12 @@ contract Natillera is
         view
         returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
     {
-        return _calculateContributionView(member);
-    }
-
-    /**
-     * @dev View version of contribution calculation
-     */
-    function _calculateContributionView(
-        address member
-    )
-        private
-        view
-        returns (uint256 amountPaid, uint256 amountDue, uint256 missedCycles)
-    {
         uint256 monthlyContribution = _config.monthlyContribution;
+        amountPaid = depositBalance[member];
 
-        amountPaid = _deposits[member];
-
-        // Calculate total expected up to current cycle or total months
-        uint256 cyclesToCalculate = cycle;
-        if (cyclesToCalculate > _config.totalMonths) {
-            cyclesToCalculate = _config.totalMonths;
-        }
-
+        uint256 cyclesToCalculate = cycle > _config.totalMonths
+            ? _config.totalMonths
+            : cycle;
         uint256 totalExpected = monthlyContribution * cyclesToCalculate;
 
         if (amountPaid >= totalExpected) {
@@ -621,47 +740,74 @@ contract Natillera is
     }
 
     /**
+     * @dev Determines if a member will be up-to-date after a deposit
+     * @param member Address to check
+     * @param newAmount Amount being deposited
+     * @return True if member will be up-to-date after deposit
+     */
+    function _isMemberUpToDate(
+        address member,
+        uint256 newAmount
+    ) private view returns (bool) {
+        (, uint256 amountDueBefore, ) = _calculateContribution(member);
+        return newAmount >= amountDueBefore;
+    }
+
+    /**
+     * @dev Gets total available balance in the pool
+     * @return Total balance (native or ERC20 depending on configuration)
+     */
+    function _getTotalAvailable() internal view returns (uint256) {
+        return
+            _config.token == address(0)
+                ? address(this).balance
+                : IERC20(_config.token).balanceOf(address(this));
+    }
+
+    /**
+     * @dev Updates last activity timestamp for a member
+     * @param member Address to update
+     */
+    function _updateActivity(address member) internal {
+        _lastActivity[member] = block.timestamp;
+    }
+
+    /**
+     * @dev Checks if owner has been active recently
+     * @return True if owner has taken action within half the emergency delay
+     */
+    function _hasOwnerBeenActive() internal view returns (bool) {
+        return block.timestamp <= _lastOwnerAction + (EMERGENCY_DELAY / 2);
+    }
+
+    /**
      * @dev Validates configuration parameters
      * @param config_ Configuration to validate
      */
     function _validateConfig(NatilleraConfig calldata config_) private pure {
-        // Validate token address (can be zero for native)
-        if (config_.token != address(0)) {
-            // Additional ERC20 validation could be added here
-        }
-
-        // Validate contribution amount
-        if (config_.monthlyContribution < MIN_CONTRIBUTION) {
-            revert Natillera_InvalidConfig();
-        }
-        if (config_.monthlyContribution > MAX_CONTRIBUTION) {
-            revert Natillera_InvalidConfig();
-        }
-
-        // Validate total months
-        if (config_.totalMonths < MIN_TOTAL_MONTHS) {
-            revert Natillera_InvalidConfig();
-        }
-        if (config_.totalMonths > MAX_TOTAL_MONTHS) {
-            revert Natillera_InvalidConfig();
-        }
-
-        // Validate max members
-        if (config_.maxMembers == 0) {
-            revert Natillera_InvalidConfig();
-        }
-        if (config_.maxMembers > ABSOLUTE_MAX_MEMBERS) {
-            revert Natillera_InvalidConfig();
-        }
+        if (config_.monthlyContribution < MIN_CONTRIBUTION)
+            revert InvalidConfig();
+        if (config_.monthlyContribution > MAX_CONTRIBUTION)
+            revert InvalidConfig();
+        if (config_.totalMonths < MIN_TOTAL_MONTHS) revert InvalidConfig();
+        if (config_.totalMonths > MAX_TOTAL_MONTHS) revert InvalidConfig();
+        if (config_.maxMembers == 0 || config_.maxMembers > MAX_MEMBERS)
+            revert InvalidConfig();
     }
 
     /*//////////////////////////////////////////////////////////////
-                                RECEIVE
+                                RECEIVE FUNCTION
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Allows the contract to receive ETH
-     * @dev Required for native token deposits
+     * @notice Allows contract to receive native currency
+     * @dev Only accepts ETH when pool is not finalized
+     * @dev Rejects accidental transfers to finalized pools
      */
-    receive() external payable {}
+    receive() external payable {
+        if (finalized) {
+            revert PoolFinalized();
+        }
+        emit EtherReceived(msg.sender, msg.value);
+    }
 }
