@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import {IPlatform} from "interfaces/IPlatform.sol";
 import {ITracking} from "interfaces/ITracking.sol";
@@ -74,6 +74,12 @@ interface ITokenizacion is ITracking {
     event InvestorAdded(address indexed investor);
 
     /**
+     * @notice Emitted when multiple investors are whitelisted in batch
+     * @param investors Array of investor addresses
+     */
+    event InvestorsAddedBatch(address[] investors);
+
+    /**
      * @notice Emitted when funds are withdrawn from the contract
      * @param recipient Address that received the funds
      * @param amount Amount withdrawn
@@ -86,68 +92,73 @@ interface ITokenizacion is ITracking {
     );
 
     /**
-     * @notice Emitted when the contract is paused
-     * @param account Address that triggered the pause
+     * @notice Emitted when excess payment is refunded
+     * @param investor Investor address receiving refund
+     * @param amount Refund amount
      */
-    event Paused(address indexed account);
+    event ExcessRefunded(address indexed investor, uint256 amount);
 
     /**
-     * @notice Emitted when the contract is unpaused
-     * @param account Address that triggered the unpause
+     * @notice Emitted when sale is completed (all tokens sold)
+     * @param totalSold Total tokens sold
+     * @param totalCollected Total funds collected
      */
-    event Unpaused(address indexed account);
+    event SaleCompleted(uint256 totalSold, uint256 totalCollected);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Sale is not active
-    error Tokenizacion_SaleNotActive();
+    error SaleNotActive();
 
     /// @notice Insufficient payment for purchase
-    error Tokenizacion_InsufficientPayment();
+    error InsufficientPayment();
 
     /// @notice Insufficient tokens available for sale
-    error Tokenizacion_InsufficientTokens();
+    error InsufficientTokens();
 
     /// @notice Caller is not a whitelisted investor during presale
-    error Tokenizacion_NotInvestor();
+    error NotInvestor();
 
     /// @notice Invalid purchase amount
-    error Tokenizacion_InvalidAmount();
+    error InvalidAmount();
 
     /// @notice Invalid payment method for current configuration
-    error Tokenizacion_InvalidPaymentMethod();
+    error InvalidPaymentMethod();
 
     /// @notice Transfer of funds failed
-    error Tokenizacion_TransferFailed();
+    error TransferFailed();
 
     /// @notice Invalid configuration parameters
-    error Tokenizacion_InvalidConfig();
+    error InvalidConfig();
 
     /// @notice Contract is paused
-    error Tokenizacion_ContractPaused();
-
-    /// @notice Contract is not paused
-    error Tokenizacion_ContractNotPaused();
+    error ContractPaused();
 
     /// @notice Invalid investor address
-    error Tokenizacion_InvalidInvestor();
+    error InvalidInvestor();
 
     /// @notice Investor already whitelisted
-    error Tokenizacion_AlreadyInvestor();
+    error AlreadyInvestor();
 
     /// @notice Maximum number of investors reached
-    error Tokenizacion_MaxInvestorsReached();
+    error MaxInvestorsReached();
 
     /// @notice Invalid recipient address
-    error Tokenizacion_InvalidRecipient();
+    error InvalidRecipient();
 
     /// @notice Insufficient funds to withdraw
-    error Tokenizacion_InsufficientFunds();
+    error InsufficientFunds();
 
     /// @notice Overflow in calculation
-    error Tokenizacion_Overflow();
+    error Overflow();
+
+    /// @notice Sale has already ended
+    error SaleEnded();
+
+    /// @notice Purchase would exceed investor limit
+    error PurchaseExceedsLimit();
 
     /*//////////////////////////////////////////////////////////////
                             INITIALIZATION
@@ -155,7 +166,8 @@ interface ITokenizacion is ITracking {
 
     /**
      * @notice Initializes the tokenization contract
-     * @dev Can only be called once
+     * @dev Can only be called once per instance
+     * @dev Sets up token sale configuration and initial state
      * @param tokenConfig Tokenization configuration
      * @param governanceConfig Governance configuration (reserved for future use)
      * @param projectConfig Project configuration provided by Platform
@@ -187,16 +199,22 @@ interface ITokenizacion is ITracking {
     function purchaseTokensWithERC20(uint256 amount) external;
 
     /*//////////////////////////////////////////////////////////////
-                            ADMIN FUNCTIONS
+                            ADMINISTRATIVE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Adds an address to the presale whitelist
      * @dev Only owner can add investors
-     * @dev Contract must be active (not paused)
      * @param investor Address to whitelist
      */
     function addInvestor(address investor) external;
+
+    /**
+     * @notice Adds multiple addresses to presale whitelist in batch
+     * @dev Only owner can add investors
+     * @param investors Array of addresses to whitelist
+     */
+    function batchAddInvestors(address[] calldata investors) external;
 
     /**
      * @notice Withdraws collected funds to specified address
@@ -204,10 +222,6 @@ interface ITokenizacion is ITracking {
      * @param recipient Address to receive the funds
      */
     function withdrawFunds(address payable recipient) external;
-
-    /*//////////////////////////////////////////////////////////////
-                            EMERGENCY FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Pauses the tokenization, stopping purchases
@@ -313,5 +327,71 @@ interface ITokenizacion is ITracking {
             bool publicSaleActive,
             bool saleActive,
             uint256 remaining
+        );
+
+    /**
+     * @notice Returns total funds withdrawn
+     * @return withdrawn Total amount withdrawn
+     */
+    function totalWithdrawn() external view returns (uint256 withdrawn);
+
+    /**
+     * @notice Checks if sale has ended (all tokens sold or time expired)
+     * @return ended True if sale has ended, false otherwise
+     */
+    function hasEnded() external view returns (bool ended);
+
+    /**
+     * @notice Returns investor information
+     * @param investor Investor address
+     * @return balance Token balance
+     * @return isWhitelisted Whether investor is whitelisted
+     * @return totalSpent Total amount spent by investor
+     */
+    function getInvestorInfo(
+        address investor
+    )
+        external
+        view
+        returns (uint256 balance, bool isWhitelisted, uint256 totalSpent);
+
+    /**
+     * @notice Returns maximum number of investors allowed
+     * @return maxInvestors Maximum investors capacity
+     */
+    function maxInvestors() external view returns (uint256 maxInvestors);
+
+    /**
+     * @notice Returns maximum purchase limit per investor
+     * @return maxIndividualPurchase Maximum tokens per investor
+     */
+    function maxIndividualPurchase()
+        external
+        view
+        returns (uint256 maxIndividualPurchase);
+
+    /**
+     * @notice Returns sale end timestamp
+     * @return endTime Timestamp when sale ends (0 if indefinite or based on token supply)
+     */
+    function saleEndTime() external view returns (uint256 endTime);
+
+    /**
+     * @notice Returns all configuration constants
+     * @return minPurchase Minimum purchase amount
+     * @return maxPurchase Maximum single transaction purchase
+     * @return maxInvestorsCap Maximum investors capacity
+     * @return maxSaleDuration Maximum sale duration in seconds
+     * @return maxPerInvestor Maximum tokens per investor
+     */
+    function getConstants()
+        external
+        view
+        returns (
+            uint256 minPurchase,
+            uint256 maxPurchase,
+            uint256 maxInvestorsCap,
+            uint256 maxSaleDuration,
+            uint256 maxPerInvestor
         );
 }

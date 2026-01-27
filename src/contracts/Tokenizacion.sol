@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {Tracking} from "contracts/Tracking.sol";
 import {ITokenizacion} from "interfaces/ITokenizacion.sol";
@@ -13,16 +13,15 @@ import {IPlatform} from "interfaces/IPlatform.sol";
 
 /**
  * @title Tokenizacion
- * @dev Internal token sale mechanism for non-transferable project positions
- * @notice Implements token sale with optional presale phase and whitelist
  * @author K-Labs
+ * @notice Internal token sale mechanism for non-transferable project positions
+ * @dev Implements token sale with optional presale phase and whitelist
  * @dev Tokens represent non-transferable project ownership positions (NOT ERC20)
- * @dev Uses upgradeable pattern for potential future improvements
+ * @custom:features Presale whitelist, native/ERC20 payments, batch operations
  */
 contract Tokenizacion is
     Initializable,
     Tracking,
-    OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     PausableUpgradeable,
     ITokenizacion
@@ -33,60 +32,67 @@ contract Tokenizacion is
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Minimum purchase amount (1 token)
+    /// @notice Minimum purchase amount (1 token)
     uint256 private constant MIN_PURCHASE_AMOUNT = 1;
 
-    /// @dev Maximum purchase amount in a single transaction
+    /// @notice Maximum purchase amount in a single transaction
     uint256 private constant MAX_PURCHASE_AMOUNT = 1_000_000;
 
-    /// @dev Maximum number of investors (safety limit)
+    /// @notice Maximum number of investors (safety limit)
     uint256 private constant MAX_INVESTORS = 10_000;
 
-    /// @dev Maximum sale duration (2 years)
+    /// @notice Maximum sale duration (2 years)
     uint256 private constant MAX_SALE_DURATION = 730 days;
+
+    /// @notice Maximum individual investor purchase limit (in tokens)
+    uint256 private constant MAX_INDIVIDUAL_PURCHASE = 100_000;
 
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Tokenization configuration
+    /// @notice Tokenization configuration parameters
     TokenizacionParams private _config;
 
-    /// @notice Investor token balances (non-transferable positions)
-    mapping(address => uint256) private _balances;
+    /// @inheritdoc ITokenizacion
+    mapping(address => uint256) public override balanceOf;
 
-    /// @notice Whitelisted investors for presale
-    mapping(address => bool) private _isWhitelisted;
+    /// @inheritdoc ITokenizacion
+    mapping(address => bool) public override isInvestor;
 
     /// @notice List of all investors
     address[] private _investors;
 
-    /// @notice Total tokens sold
-    uint256 private _tokensSold;
+    /// @inheritdoc ITokenizacion
+    uint256 public override totalTokensSold;
 
-    /// @notice Total funds collected
-    uint256 private _totalCollected;
+    /// @inheritdoc ITokenizacion
+    uint256 public override totalCollected;
 
-    /// @notice Total funds withdrawn
-    uint256 private _totalWithdrawn;
+    /// @inheritdoc ITokenizacion
+    uint256 public override totalWithdrawn;
+
+    /// @notice Total refunds issued
+    uint256 private _totalRefunded;
 
     /*//////////////////////////////////////////////////////////////
                                 MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Restricts access to whitelisted investors only
+     * @dev Restricts access to whitelisted investors only during presale
      */
-    modifier onlyWhitelisted() {
-        if (!_isWhitelisted[msg.sender]) revert Tokenizacion_NotInvestor();
+    modifier onlyWhitelistedDuringPresale() {
+        if (_isPresaleActive() && !isInvestor[msg.sender]) revert NotInvestor();
         _;
     }
 
     /**
-     * @dev Ensures sale is active
+     * @dev Ensures sale is active before purchase
      */
     modifier whenSaleActive() {
-        if (!_isSaleActive()) revert Tokenizacion_SaleNotActive();
+        if (!_isSaleActive()) revert SaleNotActive();
+        if (_hasSaleEnded()) revert SaleEnded();
         _;
     }
 
@@ -94,33 +100,34 @@ contract Tokenizacion is
      * @dev Restricts access when contract is active (not paused)
      */
     modifier whenActive() {
-        if (paused()) revert Tokenizacion_ContractPaused();
+        if (paused()) revert ContractPaused();
         _;
     }
 
     /**
-     * @dev Validates purchase amount
+     * @dev Validates purchase amount within transaction limits
+     * @dev Does NOT check individual investor limits (checked in _processPurchase)
      */
     modifier validAmount(uint256 amount) {
-        if (amount < MIN_PURCHASE_AMOUNT) revert Tokenizacion_InvalidAmount();
-        if (amount > MAX_PURCHASE_AMOUNT) revert Tokenizacion_InvalidAmount();
+        if (amount < MIN_PURCHASE_AMOUNT) revert InvalidAmount();
+        if (amount > MAX_PURCHASE_AMOUNT) revert InvalidAmount();
         _;
     }
 
     /**
      * @dev Validates investor address
      */
-    modifier validInvestor(address investor) {
-        if (investor == address(0)) revert Tokenizacion_InvalidInvestor();
-        if (investor == address(this)) revert Tokenizacion_InvalidInvestor();
+    modifier validAddress(address addr) {
+        if (addr == address(0) || addr == address(this))
+            revert InvalidInvestor();
         _;
     }
 
     /**
-     * @dev Validates recipient address
+     * @dev Validates recipient address for withdrawals
      */
     modifier validRecipient(address recipient) {
-        if (recipient == address(0)) revert Tokenizacion_InvalidRecipient();
+        if (recipient == address(0)) revert InvalidRecipient();
         _;
     }
 
@@ -130,26 +137,23 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Initializes the tokenization contract
-     * @dev Sets up configuration, ownership, and initial state
+     * @dev Validates configuration parameters and sets up initial state
+     * @dev The governanceConfig parameter is reserved for future use
      */
     function initialize(
         TokenizacionParams calldata tokenConfig,
-        IPlatform.GovernanceConfig calldata governanceConfig,
+        IPlatform.GovernanceConfig calldata,
         IPlatform.ProjectConfig calldata projectConfig
-    ) external override initializer notInitialized {
+    ) external override initializer {
         // Validate configuration
         _validateConfig(tokenConfig);
 
-        // Initialize Tracking with project information
+        // Initialize parent contracts
         __Tracking_init(
             projectConfig.platform,
             projectConfig.projectId,
             projectConfig.creator
         );
-
-        // Initialize other parent contracts
-        __Ownable_init(projectConfig.creator);
         __ReentrancyGuard_init();
         __Pausable_init();
 
@@ -171,7 +175,7 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Purchase tokens with native currency
+     * @dev Validates payment method and processes native currency purchase
      */
     function purchaseTokens(
         uint256 amount
@@ -183,18 +187,16 @@ contract Tokenizacion is
         whenActive
         whenSaleActive
         validAmount(amount)
+        onlyWhitelistedDuringPresale
     {
-        if (_config.paymentToken != address(0)) {
-            revert Tokenizacion_InvalidPaymentMethod();
-        }
+        if (_config.paymentToken != address(0)) revert InvalidPaymentMethod();
 
-        _validatePresaleAccess();
-        _executePurchase(amount, msg.value);
+        _processPurchase(amount, msg.value);
     }
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Purchase tokens with ERC20 token
+     * @dev Validates payment method and processes ERC20 purchase
      */
     function purchaseTokensWithERC20(
         uint256 amount
@@ -205,12 +207,9 @@ contract Tokenizacion is
         whenActive
         whenSaleActive
         validAmount(amount)
+        onlyWhitelistedDuringPresale
     {
-        if (_config.paymentToken == address(0)) {
-            revert Tokenizacion_InvalidPaymentMethod();
-        }
-
-        _validatePresaleAccess();
+        if (_config.paymentToken == address(0)) revert InvalidPaymentMethod();
 
         uint256 paymentRequired = amount * _config.pricePerToken;
 
@@ -220,26 +219,24 @@ contract Tokenizacion is
             paymentRequired
         );
 
-        _executePurchase(amount, paymentRequired);
+        _processPurchase(amount, paymentRequired);
     }
 
     /*//////////////////////////////////////////////////////////////
-                            ADMIN FUNCTIONS
+                            ADMINISTRATIVE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Add investor to whitelist
+     * @dev Adds single investor to whitelist
      */
     function addInvestor(
         address investor
-    ) external override onlyOwner whenActive validInvestor(investor) {
-        if (_isWhitelisted[investor]) revert Tokenizacion_AlreadyInvestor();
-        if (_investors.length >= MAX_INVESTORS) {
-            revert Tokenizacion_MaxInvestorsReached();
-        }
+    ) external override onlyOwner whenActive validAddress(investor) {
+        if (isInvestor[investor]) revert AlreadyInvestor();
+        if (_investors.length >= MAX_INVESTORS) revert MaxInvestorsReached();
 
-        _isWhitelisted[investor] = true;
+        isInvestor[investor] = true;
         _investors.push(investor);
 
         emit InvestorAdded(investor);
@@ -247,7 +244,46 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Withdraw collected funds to specified address
+     * @dev Adds multiple investors to whitelist in batch
+     */
+    function batchAddInvestors(
+        address[] calldata investors
+    ) external override onlyOwner whenActive {
+        uint256 count = investors.length;
+        address[] memory addedInvestors = new address[](count);
+        uint256 addedCount = 0;
+
+        for (uint256 i = 0; i < count; ) {
+            address investor = investors[i];
+            if (
+                investor != address(0) &&
+                investor != address(this) &&
+                !isInvestor[investor]
+            ) {
+                if (_investors.length < MAX_INVESTORS) {
+                    isInvestor[investor] = true;
+                    _investors.push(investor);
+                    addedInvestors[addedCount] = investor;
+                    addedCount++;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        if (addedCount > 0) {
+            address[] memory finalAdded = new address[](addedCount);
+            for (uint256 j = 0; j < addedCount; j++) {
+                finalAdded[j] = addedInvestors[j];
+            }
+            emit InvestorsAddedBatch(finalAdded);
+        }
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     * @dev Withdraws collected funds to specified address
      */
     function withdrawFunds(
         address payable recipient
@@ -258,45 +294,39 @@ contract Tokenizacion is
         if (tokenAddress == address(0)) {
             // Native currency withdrawal
             balance = address(this).balance;
-            if (balance == 0) revert Tokenizacion_InsufficientFunds();
-
-            (bool success, ) = recipient.call{value: balance}("");
-            if (!success) revert Tokenizacion_TransferFailed();
         } else {
             // ERC20 token withdrawal
             balance = IERC20(tokenAddress).balanceOf(address(this));
-            if (balance == 0) revert Tokenizacion_InsufficientFunds();
-
-            IERC20(tokenAddress).safeTransfer(recipient, balance);
         }
 
+        if (balance == 0) revert InsufficientFunds();
+
         // Update total withdrawn
-        _totalWithdrawn += balance;
-        require(_totalWithdrawn >= balance, "Tokenizacion: overflow");
+        totalWithdrawn += balance;
+
+        // Transfer funds
+        if (tokenAddress == address(0)) {
+            (bool success, ) = recipient.call{value: balance}("");
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(tokenAddress).safeTransfer(recipient, balance);
+        }
 
         emit FundsWithdrawn(recipient, balance, tokenAddress);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            EMERGENCY FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
     /**
      * @inheritdoc ITokenizacion
-     * @notice Pauses the tokenization, stopping purchases
      */
     function pause() external override onlyOwner {
         _pause();
-        emit Paused(msg.sender);
     }
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Unpauses the tokenization, resuming purchases
      */
     function unpause() external override onlyOwner {
         _unpause();
-        emit Unpaused(msg.sender);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -305,7 +335,6 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Returns tokenization configuration
      */
     function config()
         external
@@ -318,7 +347,6 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Returns list of all investors
      */
     function investors() external view override returns (address[] memory) {
         return _investors;
@@ -326,43 +354,13 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Returns token balance for an investor
-     */
-    function balanceOf(
-        address investor
-    ) external view override returns (uint256) {
-        return _balances[investor];
-    }
-
-    /**
-     * @inheritdoc ITokenizacion
-     * @notice Returns total tokens sold
-     */
-    function totalTokensSold() external view override returns (uint256) {
-        return _tokensSold;
-    }
-
-    /**
-     * @inheritdoc ITokenizacion
-     * @notice Returns remaining tokens for sale
      */
     function remainingTokens() external view override returns (uint256) {
-        return _config.totalTokens - _tokensSold;
+        return _config.totalTokens - totalTokensSold;
     }
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Checks if address is whitelisted investor
-     */
-    function isInvestor(
-        address investor
-    ) external view override returns (bool) {
-        return _isWhitelisted[investor];
-    }
-
-    /**
-     * @inheritdoc ITokenizacion
-     * @notice Checks if presale is active
      */
     function isPresaleActive() external view override returns (bool) {
         return _isPresaleActive();
@@ -370,7 +368,6 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Checks if public sale is active
      */
     function isPublicSaleActive() external view override returns (bool) {
         return _isPublicSaleActive();
@@ -378,24 +375,13 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Calculates cost for specified token amount
      */
     function cost(uint256 amount) external view override returns (uint256) {
-        if (amount == 0) return 0;
         return amount * _config.pricePerToken;
     }
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Returns total funds collected
-     */
-    function totalCollected() external view override returns (uint256) {
-        return _totalCollected;
-    }
-
-    /**
-     * @inheritdoc ITokenizacion
-     * @notice Returns total number of investors
      */
     function investorCount() external view override returns (uint256) {
         return _investors.length;
@@ -403,7 +389,6 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @notice Returns sale status information
      */
     function saleStatus()
         external
@@ -420,23 +405,94 @@ contract Tokenizacion is
             _isPresaleActive(),
             _isPublicSaleActive(),
             _isSaleActive(),
-            _config.totalTokens - _tokensSold
+            _config.totalTokens - totalTokensSold
         );
     }
 
     /**
-     * @notice Returns total funds withdrawn
-     * @return Total amount withdrawn
+     * @inheritdoc ITokenizacion
      */
-    function totalWithdrawn() external view returns (uint256) {
-        return _totalWithdrawn;
+    function hasEnded() external view override returns (bool) {
+        return _hasSaleEnded();
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     */
+    function getInvestorInfo(
+        address investor
+    )
+        external
+        view
+        override
+        returns (uint256 balance, bool isWhitelisted, uint256 totalSpent)
+    {
+        balance = balanceOf[investor];
+        isWhitelisted = isInvestor[investor];
+        totalSpent = balance * _config.pricePerToken;
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     */
+    function maxInvestors() external pure override returns (uint256) {
+        return MAX_INVESTORS;
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     */
+    function maxIndividualPurchase() external pure override returns (uint256) {
+        return MAX_INDIVIDUAL_PURCHASE;
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     */
+    function saleEndTime() external view override returns (uint256 endTime) {
+        if (_config.publicSaleStartsAt > 0) {
+            return _config.publicSaleStartsAt + MAX_SALE_DURATION;
+        }
+        return 0;
+    }
+
+    /**
+     * @inheritdoc ITokenizacion
+     */
+    function getConstants()
+        external
+        pure
+        override
+        returns (
+            uint256 minPurchase,
+            uint256 maxPurchase,
+            uint256 maxInvestorsCap,
+            uint256 maxSaleDuration,
+            uint256 maxPerInvestor
+        )
+    {
+        return (
+            MIN_PURCHASE_AMOUNT,
+            MAX_PURCHASE_AMOUNT,
+            MAX_INVESTORS,
+            MAX_SALE_DURATION,
+            MAX_INDIVIDUAL_PURCHASE
+        );
+    }
+
+    /**
+     * @notice Returns total refunds issued
+     * @return refunded Total amount refunded
+     */
+    function totalRefunded() external view returns (uint256 refunded) {
+        return _totalRefunded;
     }
 
     /**
      * @notice Returns available balance in contract
-     * @return Current contract balance (native or ERC20)
+     * @return balance Current contract balance (native or ERC20)
      */
-    function availableBalance() external view returns (uint256) {
+    function availableBalance() external view returns (uint256 balance) {
         if (_config.paymentToken == address(0)) {
             return address(this).balance;
         } else {
@@ -444,93 +500,43 @@ contract Tokenizacion is
         }
     }
 
-    /**
-     * @notice Checks if sale has ended (all tokens sold or time expired)
-     * @return True if sale has ended, false otherwise
-     */
-    function hasEnded() external view returns (bool) {
-        if (_tokensSold >= _config.totalTokens) return true;
-
-        // Check if sale duration exceeded (if public sale has start time)
-        if (_config.publicSaleStartsAt > 0) {
-            uint256 saleEnd = _config.publicSaleStartsAt + MAX_SALE_DURATION;
-            return block.timestamp > saleEnd;
-        }
-
-        return false;
-    }
-
-    /**
-     * @notice Returns investor information
-     * @param investor Investor address
-     * @return balance Token balance
-     * @return isWhitelisted Whether investor is whitelisted
-     * @return totalSpent Total amount spent by investor
-     */
-    function getInvestorInfo(
-        address investor
-    )
-        external
-        view
-        returns (uint256 balance, bool isWhitelisted, uint256 totalSpent)
-    {
-        balance = _balances[investor];
-        isWhitelisted = _isWhitelisted[investor];
-        totalSpent = balance * _config.pricePerToken;
-    }
-
     /*//////////////////////////////////////////////////////////////
-                            INTERNAL LOGIC
+                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Executes token purchase
+     * @dev Processes token purchase with payment validation
+     * @dev Includes individual investor limit check (MAX_INDIVIDUAL_PURCHASE)
      * @param amount Token amount to purchase
      * @param paid Amount paid by investor
      */
-    function _executePurchase(uint256 amount, uint256 paid) internal {
+    function _processPurchase(uint256 amount, uint256 paid) internal {
         uint256 required = amount * _config.pricePerToken;
 
         // Validate payment
-        if (paid < required) revert Tokenizacion_InsufficientPayment();
+        if (paid < required) revert InsufficientPayment();
 
         // Validate token availability
-        if (_tokensSold + amount > _config.totalTokens) {
-            revert Tokenizacion_InsufficientTokens();
+        if (totalTokensSold + amount > _config.totalTokens) {
+            revert InsufficientTokens();
         }
 
+        // Validate individual purchase limit (this is the correct check)
+        uint256 newBalance = balanceOf[msg.sender] + amount;
+        if (newBalance > MAX_INDIVIDUAL_PURCHASE) revert PurchaseExceedsLimit();
+
         // Update investor balance if first purchase
-        bool isFirstPurchase = _balances[msg.sender] == 0;
+        bool isFirstPurchase = balanceOf[msg.sender] == 0;
 
-        // Update balances with overflow checks
-        uint256 newBalance = _balances[msg.sender] + amount;
-        require(
-            newBalance >= _balances[msg.sender],
-            "Tokenizacion: balance overflow"
-        );
+        // Update state with overflow checks
+        balanceOf[msg.sender] = newBalance;
+        totalTokensSold += amount;
+        totalCollected += required;
 
-        uint256 newTokensSold = _tokensSold + amount;
-        require(
-            newTokensSold >= _tokensSold,
-            "Tokenizacion: tokens sold overflow"
-        );
-
-        uint256 newTotalCollected = _totalCollected + required;
-        require(
-            newTotalCollected >= _totalCollected,
-            "Tokenizacion: total overflow"
-        );
-
-        _balances[msg.sender] = newBalance;
-        _tokensSold = newTokensSold;
-        _totalCollected = newTotalCollected;
-
-        // Add to investors list if first purchase and not already in list
-        if (isFirstPurchase && !_isWhitelisted[msg.sender]) {
-            require(
-                _investors.length < MAX_INVESTORS,
-                "Tokenizacion: max investors"
-            );
+        // Add to investors list if first purchase and not already whitelisted
+        if (isFirstPurchase && !isInvestor[msg.sender]) {
+            if (_investors.length >= MAX_INVESTORS)
+                revert MaxInvestorsReached();
             _investors.push(msg.sender);
         }
 
@@ -538,6 +544,11 @@ contract Tokenizacion is
         if (paid > required) {
             uint256 refund = paid - required;
             _processRefund(refund);
+        }
+
+        // Check if sale is now complete
+        if (totalTokensSold == _config.totalTokens) {
+            emit SaleCompleted(totalTokensSold, totalCollected);
         }
 
         emit TokensPurchased(msg.sender, amount, required);
@@ -548,29 +559,25 @@ contract Tokenizacion is
      * @param refundAmount Amount to refund
      */
     function _processRefund(uint256 refundAmount) internal {
+        _totalRefunded += refundAmount;
+
         if (_config.paymentToken == address(0)) {
             // Native currency refund
             (bool success, ) = payable(msg.sender).call{value: refundAmount}(
                 ""
             );
-            if (!success) revert Tokenizacion_TransferFailed();
+            if (!success) revert TransferFailed();
         } else {
             // ERC20 token refund
             IERC20(_config.paymentToken).safeTransfer(msg.sender, refundAmount);
         }
+
+        emit ExcessRefunded(msg.sender, refundAmount);
     }
 
     /**
-     * @dev Validates presale access
-     */
-    function _validatePresaleAccess() internal view {
-        if (_isPresaleActive() && !_isWhitelisted[msg.sender]) {
-            revert Tokenizacion_NotInvestor();
-        }
-    }
-
-    /**
-     * @dev Checks if presale is active
+     * @dev Checks if presale is currently active
+     * @return True if presale is active
      */
     function _isPresaleActive() internal view returns (bool) {
         if (!_config.presaleEnabled) return false;
@@ -585,7 +592,8 @@ contract Tokenizacion is
     }
 
     /**
-     * @dev Checks if public sale is active
+     * @dev Checks if public sale is currently active
+     * @return True if public sale is active
      */
     function _isPublicSaleActive() internal view returns (bool) {
         if (_isPresaleActive()) return false;
@@ -602,7 +610,8 @@ contract Tokenizacion is
     }
 
     /**
-     * @dev Checks if any sale is active
+     * @dev Checks if any sale is currently active
+     * @return True if sale is active
      */
     function _isSaleActive() internal view returns (bool) {
         if (_config.presaleEnabled) {
@@ -612,49 +621,64 @@ contract Tokenizacion is
             ) return false;
         }
 
-        // Check if sale has ended (all tokens sold)
-        if (_tokensSold >= _config.totalTokens) return false;
+        // Check if all tokens sold
+        if (totalTokensSold >= _config.totalTokens) return false;
 
         return _isPresaleActive() || _isPublicSaleActive();
     }
 
     /**
-     * @dev Validates tokenization configuration
+     * @dev Checks if sale has ended (time expired or all tokens sold)
+     * @return True if sale has ended
+     */
+    function _hasSaleEnded() internal view returns (bool) {
+        if (totalTokensSold >= _config.totalTokens) return true;
+
+        // Check if sale duration exceeded
+        if (_config.publicSaleStartsAt > 0) {
+            uint256 saleEnd = _config.publicSaleStartsAt + MAX_SALE_DURATION;
+            return block.timestamp > saleEnd;
+        }
+
+        return false;
+    }
+
+    /**
+     * @dev Validates tokenization configuration parameters
+     * @dev Maximum sale duration is 2 years (730 days) from public sale start
+     * @dev If publicSaleStartsAt = 0 and presaleEnabled = true:
+     *      - Presale runs from presaleStartsAt
+     *      - Public sale starts immediately after presale period
+     * @dev Prevents creating sales that start too far in the future (>2 years)
      * @param config_ Configuration to validate
      */
     function _validateConfig(TokenizacionParams calldata config_) private pure {
-        if (config_.totalTokens == 0) revert Tokenizacion_InvalidConfig();
-        if (config_.pricePerToken == 0) revert Tokenizacion_InvalidConfig();
+        if (config_.totalTokens == 0) revert InvalidConfig();
+        if (config_.pricePerToken == 0) revert InvalidConfig();
 
         if (config_.presaleEnabled) {
-            if (config_.presaleStartsAt == 0) {
-                revert Tokenizacion_InvalidConfig();
-            }
+            if (config_.presaleStartsAt == 0) revert InvalidConfig();
             if (
                 config_.publicSaleStartsAt > 0 &&
                 config_.presaleStartsAt >= config_.publicSaleStartsAt
-            ) {
-                revert Tokenizacion_InvalidConfig();
-            }
+            ) revert InvalidConfig();
         }
 
-        // Validate reasonable sale duration
+        // Validate reasonable sale duration (MAX 2 years)
         if (config_.publicSaleStartsAt > 0) {
             if (
                 config_.publicSaleStartsAt > block.timestamp + MAX_SALE_DURATION
-            ) {
-                revert Tokenizacion_InvalidConfig();
-            }
+            ) revert InvalidConfig();
         }
     }
 
     /*//////////////////////////////////////////////////////////////
-                                RECEIVE
+                                RECEIVE FUNCTION
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Allows the contract to receive ETH
-     * @dev Required for native token purchases
+     * @notice Allows contract to receive ETH
+     * @dev Required for native currency purchases
      */
     receive() external payable {}
 }
