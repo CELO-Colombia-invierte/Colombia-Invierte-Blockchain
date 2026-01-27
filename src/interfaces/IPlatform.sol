@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import {INatillera} from "interfaces/INatillera.sol";
 import {ITokenizacion} from "interfaces/ITokenizacion.sol";
+import {ITracking} from "interfaces/ITracking.sol";
 
 /**
  * @title IPlatform
  * @author K-Labs
- * @notice Factory and fee collection contract for the platform
- * @dev This interface defines the complete API for the Platform contract
+ * @notice Factory and management contract for Natillera and Tokenization projects
+ * @dev Factory pattern with fee collection and user management
  * @dev All fee percentages are expressed in basis points (1/100th of 1%)
  * @dev Project IDs start from 1 (0 is reserved/invalid)
- * @dev Contract includes pausability for emergency situations
  */
-interface IPlatform {
-    /*///////////////////////////////////////////////////////////////
+interface IPlatform is ITracking {
+    /*//////////////////////////////////////////////////////////////
                                 STRUCTS
     //////////////////////////////////////////////////////////////*/
 
@@ -28,10 +28,10 @@ interface IPlatform {
      */
     struct PlatformParams {
         uint256 natilleraFee;
-        uint256 tokenizationFee; // basis points (1/100th of 1%)
-        uint256 withdrawalFee; // basis points (1/100th of 1%)
-        uint256 minDelay; // seconds
-        uint256 minQuorum; // basis points (1/100th of 1%)
+        uint256 tokenizationFee;
+        uint256 withdrawalFee;
+        uint256 minDelay;
+        uint256 minQuorum;
     }
 
     /**
@@ -40,8 +40,8 @@ interface IPlatform {
      * @param minQuorum Minimum quorum for governance proposals (in basis points)
      */
     struct GovernanceConfig {
-        uint256 governanceDelay; // seconds
-        uint256 minQuorum; // basis points (1/100th of 1%)
+        uint256 governanceDelay;
+        uint256 minQuorum;
     }
 
     /**
@@ -66,7 +66,7 @@ interface IPlatform {
         uint256[] projectIds;
     }
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
 
@@ -177,55 +177,90 @@ interface IPlatform {
         uint256 amount
     );
 
-    /*///////////////////////////////////////////////////////////////
+    /**
+     * @notice Emitted when the Platform contract is initialized
+     * @param natilleraImplementation Initial Natillera implementation address
+     * @param tokenizacionImplementation Initial Tokenization implementation address
+     * @param platformParams Initial platform parameters
+     */
+    event PlatformInitialized(
+        address natilleraImplementation,
+        address tokenizacionImplementation,
+        PlatformParams platformParams
+    );
+
+    /*//////////////////////////////////////////////////////////////
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Invalid parameter provided
-    error Platform_InvalidParameter();
+    error InvalidParameter();
 
     /// @notice Invalid token address or not a proper ERC20
-    error Platform_InvalidToken();
+    error InvalidToken();
 
     /// @notice Attempted to withdraw with zero balance
-    error Platform_BalanceZero();
+    error BalanceZero();
+
+    /// @notice Insufficient balance for the operation
+    error InsufficientBalance();
 
     /// @notice Insufficient fee paid for operation
-    error Platform_InsufficientFee();
+    error InsufficientFee();
 
     /// @notice Caller is not authorized for the operation
-    error Platform_InvalidCaller();
+    error InvalidCaller();
 
     /// @notice Transfer of funds failed
-    error Platform_TransferFailed();
+    error TransferFailed();
 
     /// @notice Wallet is already registered
-    error Platform_UserAlreadyRegistered();
+    error UserAlreadyRegistered();
 
     /// @notice Wallet is not registered
-    error Platform_UserNotRegistered();
+    error UserNotRegistered();
 
     /// @notice Token is already registered
-    error Platform_TokenAlreadyRegistered();
+    error TokenAlreadyRegistered();
 
     /// @notice Token is not registered
-    error Platform_TokenNotRegistered();
+    error TokenNotRegistered();
 
     /// @notice Maximum number of tokens reached
-    error Platform_MaxTokensReached();
+    error MaxTokensReached();
 
     /// @notice ETH refund failed
-    error Platform_RefundFailed();
+    error RefundFailed();
 
-    /*///////////////////////////////////////////////////////////////
-                            PROJECT DEPLOYMENT
+    /// @notice Cannot rescue registered tokens
+    error CannotRescueRegisteredToken();
+
+    /*//////////////////////////////////////////////////////////////
+                            INITIALIZATION
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the Platform contract
+     * @dev Can only be called once per instance
+     * @dev Sets up implementations and platform parameters
+     * @param _natilleraImplementation Address of the Natillera implementation
+     * @param _tokenizacionImplementation Address of the Tokenization implementation
+     * @param platformParams Platform configuration parameters
+     */
+    function initialize(
+        address _natilleraImplementation,
+        address _tokenizacionImplementation,
+        PlatformParams calldata platformParams
+    ) external;
+
+    /*//////////////////////////////////////////////////////////////
+                            PROJECT DEPLOYMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Deploys a new Natillera contract
      * @dev Requires payment of native currency fee, excess is refunded
      * @dev Validates start time is within reasonable future bounds (max 1 year)
-     * @dev Contract must not be paused
      * @param startTimestamp When the natillera should start accepting contributions
      * @param natilleraConfig Configuration specific to the natillera
      * @param governanceConfig Governance parameters for the natillera
@@ -240,7 +275,6 @@ interface IPlatform {
      * @notice Deploys a new Tokenization contract
      * @dev Fee can be paid in native currency or registered ERC20 token
      * @dev Fee is calculated as percentage of total token value (price * quantity)
-     * @dev Contract must not be paused
      * @param tokenizationParams Tokenization project parameters
      * @param governanceConfig Governance parameters for the tokenization
      */
@@ -249,13 +283,12 @@ interface IPlatform {
         GovernanceConfig calldata governanceConfig
     ) external payable;
 
-    /*///////////////////////////////////////////////////////////////
-                            USER MANAGEMENT
+    /*//////////////////////////////////////////////////////////////
+                            USER MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Registers a new user with their email hash
-     * @dev Contract must not be paused
      * @param emailHash keccak256 hash of user's email for privacy
      */
     function registerUser(bytes32 emailHash) external;
@@ -269,8 +302,8 @@ interface IPlatform {
      */
     function addUserToProject(uint256 projectId, address user) external;
 
-    /*///////////////////////////////////////////////////////////////
-                            FEE MANAGEMENT
+    /*//////////////////////////////////////////////////////////////
+                            FEE MANAGEMENT FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -294,8 +327,8 @@ interface IPlatform {
      */
     function withdrawERC20FeesByToken(address token) external;
 
-    /*///////////////////////////////////////////////////////////////
-                            ADMINISTRATION
+    /*//////////////////////////////////////////////////////////////
+                            ADMINISTRATIVE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -333,9 +366,15 @@ interface IPlatform {
         bytes32 implementationType
     ) external;
 
-    /*///////////////////////////////////////////////////////////////
-                            EMERGENCY FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
+    /**
+     * @notice Emergency function to rescue accidentally sent tokens
+     * @dev Only for tokens not registered in the platform
+     * @dev Only owner can rescue tokens
+     * @dev Can be called even when contract is paused
+     * @param token Address of the token to rescue
+     * @param amount Amount to rescue
+     */
+    function rescueToken(address token, uint256 amount) external;
 
     /**
      * @notice Pauses the contract, stopping critical operations
@@ -350,18 +389,8 @@ interface IPlatform {
      */
     function unpause() external;
 
-    /**
-     * @notice Emergency function to rescue accidentally sent tokens
-     * @dev Only for tokens not registered in the platform
-     * @dev Only owner can rescue tokens
-     * @dev Can be called even when contract is paused
-     * @param token Address of the token to rescue
-     * @param amount Amount to rescue
-     */
-    function rescueToken(address token, uint256 amount) external;
-
-    /*///////////////////////////////////////////////////////////////
-                            VIEW FUNCTIONS
+    /*//////////////////////////////////////////////////////////////
+                                VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -462,20 +491,4 @@ interface IPlatform {
     function isTokenRegistered(
         address token
     ) external view returns (bool registered);
-
-    /**
-     * @notice Returns project address by ID (alias for getProjectById)
-     * @dev Maintains backward compatibility with original interface
-     * @param id ID of the project
-     * @return proyecto Address of the project contract
-     */
-    function proyectoPorId(uint256 id) external view returns (address proyecto);
-
-    /**
-     * @notice Checks if a token is allowed (alias for isTokenRegistered)
-     * @dev Maintains backward compatibility with original interface
-     * @param token Address of the token to check
-     * @return allowed True if allowed, false otherwise
-     */
-    function tokenStatus(address token) external view returns (bool allowed);
 }

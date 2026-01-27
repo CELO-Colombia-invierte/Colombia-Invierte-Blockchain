@@ -1,48 +1,58 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 
+import {Tracking} from "contracts/Tracking.sol";
 import {INatillera} from "interfaces/INatillera.sol";
 import {IPlatform} from "interfaces/IPlatform.sol";
 import {ITokenizacion} from "interfaces/ITokenizacion.sol";
 
 /**
  * @title Platform
- * @dev Main contract for managing natilleras and tokenization projects
- * @notice This contract handles project deployment, user registration, fee management,
- *         token administration, and emergency controls for the platform ecosystem
- * @dev All fees are represented in basis points (1/100th of 1%)
- * @dev Contract is pausable for emergency situations
+ * @author K-Labs
+ * @notice Factory and management contract for Natillera and Tokenization projects
+ * @dev Implements factory pattern with upgradeable implementations and fee management
+ * @custom:features Project deployment, user management, token registry, fee collection
  */
-contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
+contract Platform is
+    Initializable,
+    Tracking,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
+    IPlatform
+{
     using SafeERC20 for IERC20;
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev Maximum fee percentage (100% in basis points)
+    /// @notice Maximum fee percentage (100% in basis points)
     uint256 private constant MAX_FEE_BPS = 10_000;
 
-    /// @dev Maximum number of tokens that can be registered
+    /// @notice Maximum number of tokens that can be registered
     uint256 private constant MAX_REGISTERED_TOKENS = 100;
 
-    /// @dev Maximum future start time for natilleras (1 year)
+    /// @notice Maximum future start time for natilleras (1 year)
     uint256 private constant MAX_FUTURE_START = 365 days;
 
-    /// @dev Parameter identifiers for updateParameter function
+    /// @notice Maximum flat fee for natillera deployment (100 ETH)
+    uint256 private constant MAX_NATILLERA_FEE = 100 ether;
+
+    /// @notice Parameter identifiers for updateParameter function
     bytes32 private constant PARAM_FEE_NATILLERA = "FEE_DE_NATILLERA";
     bytes32 private constant PARAM_FEE_TOKENIZACION = "FEE_DE_TOKENIZACION";
     bytes32 private constant PARAM_FEE_WITHDRAWAL = "FEE_DE_WITHDRAWAL";
     bytes32 private constant PARAM_DELAY_MINIMO = "DELAY_MINIMO";
     bytes32 private constant PARAM_QUORUM_MINIMO = "QUORUM_MINIMO";
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
@@ -58,25 +68,25 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
     /// @inheritdoc IPlatform
     uint256 public override tokenizacionVersion;
 
-    /// @inheritdoc IPlatform
-    mapping(address => bool) public override tokenStatus;
+    /// @notice Token registration status
+    mapping(address => bool) public override isTokenRegistered;
 
-    /// @inheritdoc IPlatform
-    mapping(uint256 => address) public override proyectoPorId;
+    /// @notice Project addresses by ID
+    mapping(uint256 => address) public override getProjectById;
 
-    /// @dev Internal mapping of user information
+    /// @notice Internal mapping of user information
     mapping(address => UserInfo) private _userInfo;
 
-    /// @dev Counter for generating unique project IDs
+    /// @notice Counter for generating unique project IDs
     uint256 private _nextProjectId;
 
-    /// @dev Platform parameters and configuration
+    /// @notice Platform configuration parameters
     PlatformParams private _platformParams;
 
-    /// @dev List of registered ERC20 tokens
+    /// @notice List of registered ERC20 tokens
     address[] private _registeredTokens;
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 MODIFIERS
     //////////////////////////////////////////////////////////////*/
 
@@ -86,9 +96,9 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
      */
     modifier validateGovernanceConfig(GovernanceConfig calldata config) {
         if (config.governanceDelay < _platformParams.minDelay)
-            revert Platform_InvalidParameter();
+            revert InvalidParameter();
         if (config.minQuorum < _platformParams.minQuorum)
-            revert Platform_InvalidParameter();
+            revert InvalidParameter();
         _;
     }
 
@@ -97,65 +107,64 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
      * @param projectId ID of the project
      */
     modifier onlyProject(uint256 projectId) {
-        if (msg.sender != proyectoPorId[projectId])
-            revert Platform_InvalidCaller();
+        if (msg.sender != getProjectById[projectId]) revert InvalidCaller();
         _;
     }
 
-    /*///////////////////////////////////////////////////////////////
-                                CONSTRUCTOR
+    /*//////////////////////////////////////////////////////////////
+                                INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Initializes the Platform contract
-     * @param initialOwner Address that will become the contract owner
-     * @param _natilleraImplementation Address of the Natillera implementation contract
-     * @param _tokenizacionImplementation Address of the Tokenizacion implementation contract
-     * @param platformParams Initial platform parameters
-     * @dev All addresses are validated to be non-zero
-     * @dev Platform parameters are validated for correctness
+     * @inheritdoc IPlatform
+     * @dev Validates implementation addresses and platform parameters
+     * @dev The Tracking contract is initialized with this contract as platform
      */
-    constructor(
-        address initialOwner,
+    function initialize(
         address _natilleraImplementation,
         address _tokenizacionImplementation,
-        PlatformParams memory platformParams
-    ) Ownable2Step(initialOwner) {
-        if (initialOwner == address(0)) revert Platform_InvalidParameter();
+        PlatformParams calldata platformParams
+    ) external override initializer {
+        // Validate addresses
         if (
             _natilleraImplementation == address(0) ||
             _tokenizacionImplementation == address(0)
-        ) revert Platform_InvalidParameter();
+        ) revert InvalidParameter();
 
-        // Validate initial platform parameters
+        // Validate platform parameters
         _validatePlatformParams(platformParams);
 
-        _platformParams = platformParams;
+        // Initialize parent contracts
+        __Tracking_init(address(this), 0, msg.sender);
+        __ReentrancyGuard_init();
+        __Pausable_init();
 
-        // CORRECCIÓN: Asignación correcta con prefijo underscore
+        // Set implementations and parameters
         natilleraImplementation = _natilleraImplementation;
         tokenizacionImplementation = _tokenizacionImplementation;
+        _platformParams = platformParams;
 
+        // Initialize versions
         natilleraVersion = 1;
         tokenizacionVersion = 1;
 
         // Start project IDs from 1 (0 is invalid/reserved)
         _nextProjectId = 1;
+
+        emit PlatformInitialized(
+            _natilleraImplementation,
+            _tokenizacionImplementation,
+            platformParams
+        );
     }
 
-    /*///////////////////////////////////////////////////////////////
-                                PROJECT DEPLOYMENT
+    /*//////////////////////////////////////////////////////////////
+                            PROJECT DEPLOYMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IPlatform
-     * @notice Deploys a new Natillera contract
-     * @dev Requires payment of NATIVE currency fee, excess is refunded
-     * @dev Validates start time is within reasonable future bounds
-     * @dev Contract must not be paused
-     * @param startTimestamp When the natillera should start accepting contributions
-     * @param natilleraConfig Configuration specific to the natillera
-     * @param governanceConfig Governance parameters for the natillera
+     * @dev Automatically generates project config and clones implementation
      */
     function deployNatillera(
         uint256 startTimestamp,
@@ -172,13 +181,13 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         uint256 requiredFee = _platformParams.natilleraFee;
 
         // Validate fee payment
-        if (msg.value < requiredFee) revert Platform_InsufficientFee();
+        if (msg.value < requiredFee) revert InsufficientFee();
 
         // Validate start timestamp
         if (
             startTimestamp < block.timestamp ||
             startTimestamp > block.timestamp + MAX_FUTURE_START
-        ) revert Platform_InvalidParameter();
+        ) revert InvalidParameter();
 
         // Refund excess ETH
         _refundExcessEth(requiredFee);
@@ -198,7 +207,7 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         );
 
         // Store project reference
-        proyectoPorId[projectConfig.projectId] = natilleraClone;
+        getProjectById[projectConfig.projectId] = natilleraClone;
 
         emit NatilleraDeployed(
             natilleraClone,
@@ -209,12 +218,7 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Deploys a new Tokenizacion contract
      * @dev Calculates fee based on total token value (price * quantity)
-     * @dev Accepts fee payment in either native currency or registered ERC20
-     * @dev Contract must not be paused
-     * @param tokenizationParams Tokenization project parameters
-     * @param governanceConfig Governance parameters for the tokenization
      */
     function deployTokenizacion(
         ITokenizacion.TokenizacionParams calldata tokenizationParams,
@@ -231,7 +235,7 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         if (
             tokenizationParams.totalTokens == 0 ||
             tokenizationParams.pricePerToken == 0
-        ) revert Platform_InvalidParameter();
+        ) revert InvalidParameter();
 
         // Calculate total value and fee
         uint256 totalValue = tokenizationParams.totalTokens *
@@ -241,18 +245,18 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
         // Validate fee is not excessive (max 50% of total value)
         if (feeAmount > totalValue / 2) {
-            revert Platform_InvalidParameter();
+            revert InvalidParameter();
         }
 
         // Process fee payment
         if (tokenizationParams.paymentToken == address(0)) {
             // Native currency payment
-            if (msg.value < feeAmount) revert Platform_InsufficientFee();
+            if (msg.value < feeAmount) revert InsufficientFee();
             _refundExcessEth(feeAmount);
         } else {
             // ERC20 payment
-            if (!tokenStatus[tokenizationParams.paymentToken])
-                revert Platform_TokenNotRegistered();
+            if (!isTokenRegistered[tokenizationParams.paymentToken])
+                revert TokenNotRegistered();
 
             IERC20(tokenizationParams.paymentToken).safeTransferFrom(
                 msg.sender,
@@ -275,7 +279,7 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         );
 
         // Store project reference
-        proyectoPorId[projectConfig.projectId] = tokenizationClone;
+        getProjectById[projectConfig.projectId] = tokenizationClone;
 
         emit TokenizacionDeployed(
             tokenizationClone,
@@ -284,19 +288,15 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         );
     }
 
-    /*///////////////////////////////////////////////////////////////
-                                USER MANAGEMENT
+    /*//////////////////////////////////////////////////////////////
+                            USER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IPlatform
-     * @notice Registers a new user with their email hash
-     * @dev Contract must not be paused
-     * @param emailHash keccak256 hash of user's email for privacy
      */
     function registerUser(bytes32 emailHash) external override whenNotPaused {
-        if (_isUserRegistered(msg.sender))
-            revert Platform_UserAlreadyRegistered();
+        if (_isUserRegistered(msg.sender)) revert UserAlreadyRegistered();
 
         _userInfo[msg.sender] = UserInfo({
             emailHash: emailHash,
@@ -308,48 +308,37 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Adds a user to a specific project
-     * @dev Only callable by the project contract itself
-     * @dev User must be registered on the platform
-     * @param projectId ID of the project
-     * @param user Address of the user to add
      */
     function addUserToProject(
         uint256 projectId,
         address user
     ) external override onlyProject(projectId) {
-        if (!_isUserRegistered(user)) revert Platform_UserNotRegistered();
+        if (!_isUserRegistered(user)) revert UserNotRegistered();
 
         _userInfo[user].projectIds.push(projectId);
 
         emit UserAddedToProject(projectId, user, msg.sender);
     }
 
-    /*///////////////////////////////////////////////////////////////
-                                FEE MANAGEMENT
+    /*//////////////////////////////////////////////////////////////
+                            FEE MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IPlatform
-     * @notice Withdraws accumulated native currency fees to owner
-     * @dev Uses call instead of transfer for forward compatibility
-     * @dev Contract can be paused or unpaused for withdrawals
      */
     function withdrawNativeFees() external override onlyOwner nonReentrant {
         uint256 balance = address(this).balance;
-        if (balance == 0) revert Platform_BalanceZero();
+        if (balance == 0) revert BalanceZero();
 
         (bool success, ) = payable(owner()).call{value: balance}("");
-        if (!success) revert Platform_TransferFailed();
+        if (!success) revert TransferFailed();
 
         emit NativeFeesWithdrawn(owner(), balance);
     }
 
     /**
      * @inheritdoc IPlatform
-     * @notice Withdraws all registered ERC20 token fees to owner
-     * @dev Iterates through all registered tokens
-     * @dev Contract can be paused or unpaused for withdrawals
      */
     function withdrawERC20Fees() external override onlyOwner nonReentrant {
         uint256 tokenCount = _registeredTokens.length;
@@ -367,56 +356,49 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Withdraws specific ERC20 token fees to owner
-     * @dev Contract can be paused or unpaused for withdrawals
-     * @param token Address of the ERC20 token to withdraw
      */
     function withdrawERC20FeesByToken(
         address token
     ) external override onlyOwner nonReentrant {
-        if (!tokenStatus[token]) revert Platform_TokenNotRegistered();
+        if (!isTokenRegistered[token]) revert TokenNotRegistered();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance == 0) revert Platform_BalanceZero();
+        if (balance == 0) revert BalanceZero();
 
         IERC20(token).safeTransfer(owner(), balance);
 
         emit ERC20FeesWithdrawn(token, owner(), balance);
     }
 
-    /*///////////////////////////////////////////////////////////////
-                                ADMINISTRATION
+    /*//////////////////////////////////////////////////////////////
+                            ADMINISTRATIVE FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IPlatform
-     * @notice Adds a new ERC20 token to the allowed list
-     * @dev Only owner can register tokens
-     * @dev Validates token is a proper ERC20 with non-zero total supply
-     * @param token Address of the ERC20 token to register
      */
     function registerToken(address token) external override onlyOwner {
         if (token == address(0) || token == address(this))
-            revert Platform_InvalidToken();
-        if (tokenStatus[token]) revert Platform_TokenAlreadyRegistered();
+            revert InvalidToken();
+        if (isTokenRegistered[token]) revert TokenAlreadyRegistered();
         if (_registeredTokens.length >= MAX_REGISTERED_TOKENS)
-            revert Platform_MaxTokensReached();
+            revert MaxTokensReached();
 
         // Validate it's a proper ERC20
         try IERC20(token).totalSupply() returns (uint256 totalSupply) {
-            if (totalSupply == 0) revert Platform_InvalidToken();
+            if (totalSupply == 0) revert InvalidToken();
         } catch {
-            revert Platform_InvalidToken();
+            revert InvalidToken();
         }
 
         // Additional ERC20 validation
         try IERC20(token).balanceOf(address(this)) returns (uint256) {
             // Token supports balanceOf - good
         } catch {
-            revert Platform_InvalidToken();
+            revert InvalidToken();
         }
 
-        tokenStatus[token] = true;
+        isTokenRegistered[token] = true;
         _registeredTokens.push(token);
 
         emit TokenStatusUpdated(token, true);
@@ -424,14 +406,11 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Removes an ERC20 token from the allowed list
-     * @dev Only owner can deregister tokens
-     * @param token Address of the ERC20 token to deregister
      */
     function deregisterToken(address token) external override onlyOwner {
-        if (!tokenStatus[token]) revert Platform_TokenNotRegistered();
+        if (!isTokenRegistered[token]) revert TokenNotRegistered();
 
-        tokenStatus[token] = false;
+        isTokenRegistered[token] = false;
         _removeTokenFromRegistry(token);
 
         emit TokenStatusUpdated(token, false);
@@ -439,35 +418,30 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Updates platform parameters
-     * @dev Only owner can update parameters
-     * @dev Fee parameters cannot exceed 100% (10,000 basis points)
-     * @param parameter Identifier of the parameter to update
-     * @param value New value for the parameter
      */
     function updateParameter(
         bytes32 parameter,
         uint256 value
     ) external override onlyOwner {
         if (parameter == PARAM_FEE_NATILLERA) {
-            // Flat fee in native token (cap to avoid absurd values)
-            if (value > 100 ether) revert Platform_InvalidParameter();
+            // Flat fee in native token
+            if (value > MAX_NATILLERA_FEE) revert InvalidParameter();
             _platformParams.natilleraFee = value;
         } else if (parameter == PARAM_FEE_TOKENIZACION) {
             // Percentage fee (basis points)
-            if (value > MAX_FEE_BPS) revert Platform_InvalidParameter();
+            if (value > MAX_FEE_BPS) revert InvalidParameter();
             _platformParams.tokenizationFee = value;
         } else if (parameter == PARAM_FEE_WITHDRAWAL) {
-            if (value > MAX_FEE_BPS) revert Platform_InvalidParameter();
+            if (value > MAX_FEE_BPS) revert InvalidParameter();
             _platformParams.withdrawalFee = value;
         } else if (parameter == PARAM_DELAY_MINIMO) {
-            if (value == 0) revert Platform_InvalidParameter();
+            if (value == 0) revert InvalidParameter();
             _platformParams.minDelay = value;
         } else if (parameter == PARAM_QUORUM_MINIMO) {
-            if (value > MAX_FEE_BPS) revert Platform_InvalidParameter();
+            if (value > MAX_FEE_BPS) revert InvalidParameter();
             _platformParams.minQuorum = value;
         } else {
-            revert Platform_InvalidParameter();
+            revert InvalidParameter();
         }
 
         emit ParameterUpdated(parameter, value);
@@ -475,17 +449,12 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Updates implementation contracts
-     * @dev Only owner can update implementations
-     * @dev Implementation version is incremented automatically
-     * @param implementation New implementation address
-     * @param implementationType Type of implementation ("NATILLERA" or "TOKENIZACION")
      */
     function updateImplementation(
         address implementation,
         bytes32 implementationType
     ) external override onlyOwner {
-        if (implementation == address(0)) revert Platform_InvalidParameter();
+        if (implementation == address(0)) revert InvalidParameter();
 
         if (implementationType == "NATILLERA") {
             natilleraImplementation = implementation;
@@ -504,57 +473,48 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
                 tokenizacionVersion
             );
         } else {
-            revert Platform_InvalidParameter();
+            revert InvalidParameter();
         }
     }
 
     /**
-     * @notice Pauses the contract, stopping critical operations
-     * @dev Only owner can pause the contract
-     * @dev Prevents new project deployments and user registrations
+     * @inheritdoc IPlatform
      */
-    function pause() external onlyOwner {
+    function pause() external override onlyOwner {
         _pause();
     }
 
     /**
-     * @notice Unpauses the contract, resuming normal operations
-     * @dev Only owner can unpause the contract
+     * @inheritdoc IPlatform
      */
-    function unpause() external onlyOwner {
+    function unpause() external override onlyOwner {
         _unpause();
     }
 
     /**
-     * @notice Emergency function to rescue accidentally sent tokens
-     * @dev Only for tokens not registered in the platform
-     * @dev Only owner can rescue tokens
-     * @param token Address of the token to rescue
-     * @param amount Amount to rescue
+     * @inheritdoc IPlatform
      */
     function rescueToken(
         address token,
         uint256 amount
-    ) external onlyOwner nonReentrant {
-        if (token == address(0)) revert Platform_InvalidToken();
-        if (tokenStatus[token]) revert Platform_CannotRescueRegisteredToken();
+    ) external override onlyOwner nonReentrant {
+        if (token == address(0)) revert InvalidToken();
+        if (isTokenRegistered[token]) revert CannotRescueRegisteredToken();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance < amount) revert Platform_BalanceZero();
+        if (balance < amount) revert InsufficientBalance();
 
         IERC20(token).safeTransfer(owner(), amount);
 
         emit TokensRescued(token, owner(), amount);
     }
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc IPlatform
-     * @notice Returns current platform parameters
-     * @return Current platform parameters
      */
     function getPlatformParameters()
         external
@@ -567,8 +527,6 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Returns list of all registered tokens
-     * @return Array of registered token addresses
      */
     function getRegisteredTokens()
         external
@@ -581,9 +539,6 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Returns user information for a specific wallet
-     * @param user Address of the user
-     * @return User information including email hash and project IDs
      */
     function getUserInfo(
         address user
@@ -593,9 +548,6 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Returns balance of specific token held by platform
-     * @param token Address of the ERC20 token
-     * @return Current balance of the token
      */
     function getTokenBalance(
         address token
@@ -605,9 +557,6 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Checks if an address is registered as a user
-     * @param user Address to check
-     * @return True if registered, false otherwise
      */
     function isUserRegistered(
         address user
@@ -617,39 +566,13 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @inheritdoc IPlatform
-     * @notice Returns the total number of projects created
-     * @return Number of projects (project IDs start from 1)
      */
     function totalProjects() external view override returns (uint256) {
-        return _nextProjectId - 1; // Subtract 1 because we started from 1
+        return _nextProjectId - 1;
     }
 
-    /**
-     * @inheritdoc IPlatform
-     * @notice Returns project address by ID
-     * @param projectId ID of the project
-     * @return Address of the project contract
-     */
-    function getProjectById(
-        uint256 projectId
-    ) external view override returns (address) {
-        return proyectoPorId[projectId];
-    }
-
-    /**
-     * @inheritdoc IPlatform
-     * @notice Checks if a token is registered and allowed
-     * @param token Address of the token to check
-     * @return True if registered, false otherwise
-     */
-    function isTokenRegistered(
-        address token
-    ) external view override returns (bool) {
-        return tokenStatus[token];
-    }
-
-    /*///////////////////////////////////////////////////////////////
-                                INTERNAL FUNCTIONS
+    /*//////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -672,21 +595,19 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
 
     /**
      * @dev Removes a token from the registered tokens array
-     * @dev Optimized to start from the end for efficiency
      * @param token Address of the token to remove
      */
     function _removeTokenFromRegistry(address token) internal {
         uint256 length = _registeredTokens.length;
 
-        // Optimización: empezar desde el final
-        for (uint256 i = length; i > 0; ) {
-            unchecked {
-                --i;
-            }
+        for (uint256 i = 0; i < length; ) {
             if (_registeredTokens[i] == token) {
                 _registeredTokens[i] = _registeredTokens[length - 1];
                 _registeredTokens.pop();
                 break;
+            }
+            unchecked {
+                ++i;
             }
         }
     }
@@ -699,7 +620,7 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         if (msg.value > requiredAmount) {
             uint256 excess = msg.value - requiredAmount;
             (bool success, ) = payable(msg.sender).call{value: excess}("");
-            if (!success) revert Platform_RefundFailed();
+            if (!success) revert RefundFailed();
 
             emit ExcessEthRefunded(msg.sender, excess);
         }
@@ -710,19 +631,16 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
      * @param params Platform parameters to validate
      */
     function _validatePlatformParams(
-        PlatformParams memory params
+        PlatformParams calldata params
     ) internal pure {
-        if (params.tokenizationFee > MAX_FEE_BPS)
-            revert Platform_InvalidParameter();
-        if (params.withdrawalFee > MAX_FEE_BPS)
-            revert Platform_InvalidParameter();
-        if (params.minQuorum > MAX_FEE_BPS) revert Platform_InvalidParameter();
-        if (params.minDelay == 0) revert Platform_InvalidParameter();
+        if (params.tokenizationFee > MAX_FEE_BPS) revert InvalidParameter();
+        if (params.withdrawalFee > MAX_FEE_BPS) revert InvalidParameter();
+        if (params.minQuorum > MAX_FEE_BPS) revert InvalidParameter();
+        if (params.minDelay == 0) revert InvalidParameter();
 
-        // Validate natillera fee is reasonable (optional)
-        if (params.natilleraFee > 100 ether) {
-            // Max 100 ETH fee
-            revert Platform_InvalidParameter();
+        // Validate natillera fee is reasonable
+        if (params.natilleraFee > MAX_NATILLERA_FEE) {
+            revert InvalidParameter();
         }
     }
 
@@ -735,12 +653,12 @@ contract Platform is IPlatform, Ownable2Step, ReentrancyGuard, Pausable {
         return _userInfo[user].emailHash != bytes32(0);
     }
 
-    /*///////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////
                                 RECEIVE FUNCTION
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Allows the contract to receive ETH
+     * @notice Allows contract to receive ETH
      * @dev Required for fee collection in native currency
      */
     receive() external payable {}
