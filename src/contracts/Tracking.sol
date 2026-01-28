@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {ITracking} from "interfaces/ITracking.sol";
 
@@ -11,10 +10,10 @@ import {ITracking} from "interfaces/ITracking.sol";
  * @author K-Labs
  * @notice Base contract for project tracking and platform integration
  * @dev Abstract contract providing standardized project metadata and platform interaction
- * @dev Inherited by Natillera and Tokenizacion contracts
+ * @dev Inherited by Natillera, Tokenizacion, and Platform contracts
  * @dev Implements initialization pattern with proper validation
  */
-abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
+abstract contract Tracking is Initializable, ITracking {
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
@@ -39,7 +38,7 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
      * @dev Modifier to restrict access to platform only
      */
     modifier onlyPlatform() {
-        if (msg.sender != _platform) revert Tracking_NotPlatform();
+        if (msg.sender != _platform) revert NotPlatform();
         _;
     }
 
@@ -47,7 +46,7 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
      * @dev Modifier to ensure contract is not already initialized
      */
     modifier notInitialized() {
-        if (_initialized) revert Tracking_AlreadyInitialized();
+        if (_initialized) revert AlreadyInitialized();
         _;
     }
 
@@ -66,14 +65,11 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
         address platform_,
         uint256 projectId_,
         address creator_
-    ) internal onlyInitializing {
+    ) internal onlyInitializing notInitialized {
         // Validate parameters
-        if (platform_ == address(0)) revert Tracking_InvalidPlatform();
-        if (projectId_ == 0) revert Tracking_InvalidProjectId();
-        if (creator_ == address(0)) revert Tracking_InvalidPlatform();
-
-        // Initialize Ownable with creator
-        __Ownable_init(creator_);
+        if (platform_ == address(0)) revert InvalidPlatform();
+        if (projectId_ == 0) revert InvalidProjectId();
+        if (creator_ == address(0)) revert InvalidCreator();
 
         // Store project information
         _platform = platform_;
@@ -85,12 +81,11 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            VIEW FUNCTIONS
+                                VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
      * @inheritdoc ITracking
-     * @notice Returns the platform contract address
      */
     function platform() public view override returns (address) {
         return _platform;
@@ -98,7 +93,6 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Returns the project identifier
      */
     function projectId() public view override returns (uint256) {
         return _projectId;
@@ -106,7 +100,6 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Returns the project creator address
      */
     function creator() public view override returns (address) {
         return _creator;
@@ -114,8 +107,6 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Checks if the contract is a valid project registered with platform
-     * @return True if project is properly registered, false otherwise
      */
     function isValidProject() external view override returns (bool) {
         return
@@ -127,7 +118,6 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Returns complete project metadata
      */
     function getProjectInfo()
         external
@@ -140,11 +130,9 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Validates that caller is the platform contract
-     * @dev Reverts with Tracking_NotPlatform if caller is not platform
      */
     function validatePlatformCaller() external view override {
-        if (msg.sender != _platform) revert Tracking_NotPlatform();
+        if (msg.sender != _platform) revert NotPlatform();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -153,15 +141,12 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
 
     /**
      * @inheritdoc ITracking
-     * @notice Updates the platform reference (emergency use only)
-     * @dev Only callable by current platform
-     * @param newPlatform New platform contract address
      */
     function updatePlatform(
         address newPlatform
     ) external override onlyPlatform {
-        if (newPlatform == address(0)) revert Tracking_InvalidPlatform();
-        if (newPlatform == _platform) revert Tracking_PlatformImmutable();
+        if (newPlatform == address(0)) revert InvalidPlatform();
+        if (newPlatform == _platform) revert SamePlatform();
 
         address oldPlatform = _platform;
         _platform = newPlatform;
@@ -170,35 +155,59 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
     }
 
     /*//////////////////////////////////////////////////////////////
-                                INTERNAL
+                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Internal function to get platform address (for derived contracts)
-     * @return Current platform address
+     * @dev Returns the current owner of the contract
+     * @return The address of the current owner (project creator)
      */
-    function _getPlatform() internal view returns (address) {
-        return _platform;
-    }
-
-    /**
-     * @dev Internal function to get project ID (for derived contracts)
-     * @return Current project ID
-     */
-    function _getProjectId() internal view returns (uint256) {
-        return _projectId;
-    }
-
-    /**
-     * @dev Internal function to get creator address (for derived contracts)
-     * @return Project creator address
-     */
-    function _getCreator() internal view returns (address) {
+    function _owner() internal view returns (address) {
         return _creator;
     }
 
     /**
-     * @dev Internal function to check if caller is platform
+     * @dev Checks if the caller is the owner (project creator)
+     * @return True if caller is owner, false otherwise
+     */
+    function _isOwner() internal view returns (bool) {
+        return msg.sender == _creator;
+    }
+
+    /**
+     * @dev Requires that the caller is the owner
+     * @dev Reverts with NotOwner error if caller is not owner
+     */
+    function _requireOwner() internal view {
+        if (msg.sender != _creator) revert NotOwner();
+    }
+
+    /**
+     * @dev Returns the current platform address
+     * @return Platform contract address
+     */
+    function _platformAddress() internal view returns (address) {
+        return _platform;
+    }
+
+    /**
+     * @dev Returns the current project ID
+     * @return Project identifier
+     */
+    function _projectIdentifier() internal view returns (uint256) {
+        return _projectId;
+    }
+
+    /**
+     * @dev Returns the project creator address
+     * @return Creator address
+     */
+    function _projectCreator() internal view returns (address) {
+        return _creator;
+    }
+
+    /**
+     * @dev Checks if the caller is the platform contract
      * @return True if caller is platform, false otherwise
      */
     function _isPlatform() internal view returns (bool) {
@@ -206,20 +215,24 @@ abstract contract Tracking is Initializable, OwnableUpgradeable, ITracking {
     }
 
     /**
-     * @dev Internal function to require platform caller
-     * @dev Reverts if caller is not platform
+     * @dev Requires that the caller is the platform contract
+     * @dev Reverts with NotPlatform error if caller is not platform
      */
     function _requirePlatform() internal view {
-        if (msg.sender != _platform) revert Tracking_NotPlatform();
+        if (msg.sender != _platform) revert NotPlatform();
     }
 
     /**
-     * @dev Internal function to check if contract is initialized
+     * @dev Checks if contract has been initialized
      * @return True if initialized, false otherwise
      */
     function _isInitialized() internal view returns (bool) {
         return _initialized;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                                STORAGE GAP
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @dev This empty reserved space is put in place to allow future versions

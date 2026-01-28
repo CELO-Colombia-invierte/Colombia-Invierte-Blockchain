@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 /**
  * @title ITracking
@@ -40,19 +40,25 @@ interface ITracking {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Invalid platform address (zero address)
-    error Tracking_InvalidPlatform();
+    error InvalidPlatform();
 
     /// @notice Invalid project ID (zero)
-    error Tracking_InvalidProjectId();
+    error InvalidProjectId();
+
+    /// @notice Invalid creator address (zero address)
+    error InvalidCreator();
 
     /// @notice Caller is not the platform
-    error Tracking_NotPlatform();
+    error NotPlatform();
+
+    /// @notice Caller is not the owner
+    error NotOwner();
 
     /// @notice Project already initialized
-    error Tracking_AlreadyInitialized();
+    error AlreadyInitialized();
 
-    /// @notice Platform address cannot be changed after initialization
-    error Tracking_PlatformImmutable();
+    /// @notice Platform address cannot be changed to same value
+    error SamePlatform();
 
     /*//////////////////////////////////////////////////////////////
                                 VIEW FUNCTIONS
@@ -93,6 +99,12 @@ interface ITracking {
         view
         returns (address platformAddress, uint256 id, address creatorAddress);
 
+    /**
+     * @notice Validates that caller is the platform contract
+     * @dev Reverts with NotPlatform if not called by platform
+     */
+    function validatePlatformCaller() external view;
+
     /*//////////////////////////////////////////////////////////////
                             ADMIN FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -104,10 +116,4 @@ interface ITracking {
      * @param newPlatform New platform contract address
      */
     function updatePlatform(address newPlatform) external;
-
-    /**
-     * @notice Validates that caller is the platform contract
-     * @dev Reverts with Tracking_NotPlatform if not called by platform
-     */
-    function validatePlatformCaller() external view;
 }
