@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
@@ -327,20 +327,22 @@ contract Platform is
     /**
      * @inheritdoc IPlatform
      */
-    function withdrawNativeFees() external override onlyOwner nonReentrant {
+    function withdrawNativeFees() external override nonReentrant {
+        _requireOwner();
         uint256 balance = address(this).balance;
         if (balance == 0) revert BalanceZero();
 
-        (bool success, ) = payable(owner()).call{value: balance}("");
+        (bool success, ) = payable(_owner()).call{value: balance}("");
         if (!success) revert TransferFailed();
 
-        emit NativeFeesWithdrawn(owner(), balance);
+        emit NativeFeesWithdrawn(_owner(), balance);
     }
 
     /**
      * @inheritdoc IPlatform
      */
-    function withdrawERC20Fees() external override onlyOwner nonReentrant {
+    function withdrawERC20Fees() external override nonReentrant {
+        _requireOwner();
         uint256 tokenCount = _registeredTokens.length;
 
         for (uint256 i = 0; i < tokenCount; ++i) {
@@ -348,8 +350,8 @@ contract Platform is
             uint256 balance = IERC20(token).balanceOf(address(this));
 
             if (balance > 0) {
-                IERC20(token).safeTransfer(owner(), balance);
-                emit ERC20FeesWithdrawn(token, owner(), balance);
+                IERC20(token).safeTransfer(_owner(), balance);
+                emit ERC20FeesWithdrawn(token, _owner(), balance);
             }
         }
     }
@@ -359,15 +361,16 @@ contract Platform is
      */
     function withdrawERC20FeesByToken(
         address token
-    ) external override onlyOwner nonReentrant {
+    ) external override nonReentrant {
+        _requireOwner();
         if (!isTokenRegistered[token]) revert TokenNotRegistered();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance == 0) revert BalanceZero();
 
-        IERC20(token).safeTransfer(owner(), balance);
+        IERC20(token).safeTransfer(_owner(), balance);
 
-        emit ERC20FeesWithdrawn(token, owner(), balance);
+        emit ERC20FeesWithdrawn(token, _owner(), balance);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -377,7 +380,8 @@ contract Platform is
     /**
      * @inheritdoc IPlatform
      */
-    function registerToken(address token) external override onlyOwner {
+    function registerToken(address token) external override {
+        _requireOwner();
         if (token == address(0) || token == address(this))
             revert InvalidToken();
         if (isTokenRegistered[token]) revert TokenAlreadyRegistered();
@@ -407,7 +411,8 @@ contract Platform is
     /**
      * @inheritdoc IPlatform
      */
-    function deregisterToken(address token) external override onlyOwner {
+    function deregisterToken(address token) external override {
+        _requireOwner();
         if (!isTokenRegistered[token]) revert TokenNotRegistered();
 
         isTokenRegistered[token] = false;
@@ -422,7 +427,8 @@ contract Platform is
     function updateParameter(
         bytes32 parameter,
         uint256 value
-    ) external override onlyOwner {
+    ) external override {
+        _requireOwner();
         if (parameter == PARAM_FEE_NATILLERA) {
             // Flat fee in native token
             if (value > MAX_NATILLERA_FEE) revert InvalidParameter();
@@ -453,7 +459,8 @@ contract Platform is
     function updateImplementation(
         address implementation,
         bytes32 implementationType
-    ) external override onlyOwner {
+    ) external override {
+        _requireOwner();
         if (implementation == address(0)) revert InvalidParameter();
 
         if (implementationType == "NATILLERA") {
@@ -480,14 +487,16 @@ contract Platform is
     /**
      * @inheritdoc IPlatform
      */
-    function pause() external override onlyOwner {
+    function pause() external override {
+        _requireOwner();
         _pause();
     }
 
     /**
      * @inheritdoc IPlatform
      */
-    function unpause() external override onlyOwner {
+    function unpause() external override {
+        _requireOwner();
         _unpause();
     }
 
@@ -497,16 +506,17 @@ contract Platform is
     function rescueToken(
         address token,
         uint256 amount
-    ) external override onlyOwner nonReentrant {
+    ) external override nonReentrant {
+        _requireOwner();
         if (token == address(0)) revert InvalidToken();
         if (isTokenRegistered[token]) revert CannotRescueRegisteredToken();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance < amount) revert InsufficientBalance();
 
-        IERC20(token).safeTransfer(owner(), amount);
+        IERC20(token).safeTransfer(_owner(), amount);
 
-        emit TokensRescued(token, owner(), amount);
+        emit TokensRescued(token, _owner(), amount);
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -202,10 +202,10 @@ interface INatillera is ITracking {
     error InvalidYieldToken();
 
     /// @notice Pool has been finalized and no longer accepts deposits
-    error PoolFinalized();
+    error AlreadyFinalized();
 
     /// @notice Pool is not yet finalized
-    error PoolNotFinalized();
+    error NotFinalized();
 
     /// @notice Pool owner has been active recently
     error OwnerActive();

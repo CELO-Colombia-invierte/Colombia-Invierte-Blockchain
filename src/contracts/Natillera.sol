@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -216,7 +216,7 @@ contract Natillera is
         nonReentrant
         whenActive
     {
-        if (finalized) revert PoolFinalized();
+        if (finalized) revert AlreadyFinalized();
 
         uint256 monthlyContribution = _config.monthlyContribution;
         if (msg.value != monthlyContribution) revert InvalidDeposit();
@@ -237,7 +237,7 @@ contract Natillera is
     function depositMultipleCycles(
         uint256 cycles
     ) external payable override onlyMember syncCycle nonReentrant whenActive {
-        if (finalized) revert PoolFinalized();
+        if (finalized) revert AlreadyFinalized();
         if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) revert InvalidCycles();
 
         uint256 monthlyContribution = _config.monthlyContribution;
@@ -261,7 +261,7 @@ contract Natillera is
     function depositWithOverpayment(
         uint256 cycles
     ) external payable override onlyMember syncCycle nonReentrant whenActive {
-        if (finalized) revert PoolFinalized();
+        if (finalized) revert AlreadyFinalized();
         if (cycles == 0 || cycles > MAX_ADVANCE_CYCLES) revert InvalidCycles();
 
         uint256 monthlyContribution = _config.monthlyContribution;
@@ -299,7 +299,7 @@ contract Natillera is
         nonReentrant
         whenActive
     {
-        if (finalized) revert PoolFinalized();
+        if (finalized) revert AlreadyFinalized();
 
         // Check credit expiry
         if (creditExpiry[msg.sender] < block.timestamp) {
@@ -328,8 +328,9 @@ contract Natillera is
      * @dev Only owner can deposit yield from external sources
      * @dev Yield is added to pool for proportional distribution at maturity
      */
-    function depositYield() external payable override onlyOwner nonReentrant {
-        if (finalized) revert PoolFinalized();
+    function depositYield() external payable override nonReentrant {
+        _requireOwner();
+        if (finalized) revert AlreadyFinalized();
         if (msg.value == 0) revert NoYield();
         if (_config.token != address(0)) revert InvalidYieldToken();
 
@@ -343,10 +344,9 @@ contract Natillera is
      * @inheritdoc INatillera
      * @dev Transfers ERC20 tokens from owner to pool as yield
      */
-    function depositYieldERC20(
-        uint256 amount
-    ) external override onlyOwner nonReentrant {
-        if (finalized) revert PoolFinalized();
+    function depositYieldERC20(uint256 amount) external override nonReentrant {
+        _requireOwner();
+        if (finalized) revert AlreadyFinalized();
         if (amount == 0) revert NoYield();
         if (_config.token == address(0)) revert InvalidYieldToken();
 
@@ -369,7 +369,8 @@ contract Natillera is
      * @inheritdoc INatillera
      * @dev Registers new member with the platform and tracks membership
      */
-    function addMember(address member) external override onlyOwner whenActive {
+    function addMember(address member) external override whenActive {
+        _requireOwner();
         if (member == address(0) || member == address(this))
             revert InvalidMember();
         if (_isMember[member]) revert AlreadyMember();
@@ -391,8 +392,9 @@ contract Natillera is
      */
     function batchAddMembers(
         address[] calldata newMembers
-    ) external override onlyOwner whenActive {
-        if (finalized) revert PoolFinalized();
+    ) external override whenActive {
+        _requireOwner();
+        if (finalized) revert AlreadyFinalized();
 
         uint256 count = newMembers.length;
         address[] memory addedMembers = new address[](count);
@@ -434,8 +436,9 @@ contract Natillera is
      * @dev Also triggers auto-pause for added security
      * @dev Auto-finalization also occurs when totalMonths is reached
      */
-    function finalize() external override onlyOwner {
-        if (finalized) revert PoolFinalized();
+    function finalize() external override {
+        _requireOwner();
+        if (finalized) revert AlreadyFinalized();
 
         finalized = true;
         _lastOwnerAction = block.timestamp;
@@ -448,7 +451,8 @@ contract Natillera is
     /**
      * @inheritdoc INatillera
      */
-    function pause() external override onlyOwner {
+    function pause() external override {
+        _requireOwner();
         _pause();
         _lastOwnerAction = block.timestamp;
     }
@@ -456,7 +460,8 @@ contract Natillera is
     /**
      * @inheritdoc INatillera
      */
-    function unpause() external override onlyOwner {
+    function unpause() external override {
+        _requireOwner();
         _unpause();
         _lastOwnerAction = block.timestamp;
     }
@@ -472,7 +477,7 @@ contract Natillera is
      * @dev Can only be called once per member after finalization
      */
     function withdraw() external override nonReentrant {
-        if (!finalized) revert PoolNotFinalized();
+        if (!finalized) revert NotFinalized();
         if (rewardsClaimed[msg.sender]) revert AlreadyClaimed();
         if (!_isMember[msg.sender]) revert NotMember();
 
@@ -511,7 +516,7 @@ contract Natillera is
      * @dev Intended as last resort when owner cannot finalize pool
      */
     function emergencyWithdraw() external override onlyMember nonReentrant {
-        if (finalized) revert PoolFinalized();
+        if (finalized) revert AlreadyFinalized();
 
         // Check emergency conditions
         if (block.timestamp <= cycleDueDate + EMERGENCY_DELAY)
@@ -806,7 +811,7 @@ contract Natillera is
      */
     receive() external payable {
         if (finalized) {
-            revert PoolFinalized();
+            revert AlreadyFinalized();
         }
         emit EtherReceived(msg.sender, msg.value);
     }

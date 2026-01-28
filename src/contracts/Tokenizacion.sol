@@ -2,8 +2,8 @@
 pragma solidity ^0.8.30;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -232,7 +232,8 @@ contract Tokenizacion is
      */
     function addInvestor(
         address investor
-    ) external override onlyOwner whenActive validAddress(investor) {
+    ) external override whenActive validAddress(investor) {
+        _requireOwner();
         if (isInvestor[investor]) revert AlreadyInvestor();
         if (_investors.length >= MAX_INVESTORS) revert MaxInvestorsReached();
 
@@ -244,17 +245,18 @@ contract Tokenizacion is
 
     /**
      * @inheritdoc ITokenizacion
-     * @dev Adds multiple investors to whitelist in batch
+     * @dev Adds multiple newInvestors to whitelist in batch
      */
     function batchAddInvestors(
-        address[] calldata investors
-    ) external override onlyOwner whenActive {
-        uint256 count = investors.length;
+        address[] calldata newInvestors
+    ) external override whenActive {
+        _requireOwner();
+        uint256 count = newInvestors.length;
         address[] memory addedInvestors = new address[](count);
         uint256 addedCount = 0;
 
         for (uint256 i = 0; i < count; ) {
-            address investor = investors[i];
+            address investor = newInvestors[i];
             if (
                 investor != address(0) &&
                 investor != address(this) &&
@@ -287,7 +289,8 @@ contract Tokenizacion is
      */
     function withdrawFunds(
         address payable recipient
-    ) external override onlyOwner nonReentrant validRecipient(recipient) {
+    ) external override nonReentrant validRecipient(recipient) {
+        _requireOwner();
         uint256 balance;
         address tokenAddress = _config.paymentToken;
 
@@ -318,14 +321,16 @@ contract Tokenizacion is
     /**
      * @inheritdoc ITokenizacion
      */
-    function pause() external override onlyOwner {
+    function pause() external override {
+        _requireOwner();
         _pause();
     }
 
     /**
      * @inheritdoc ITokenizacion
      */
-    function unpause() external override onlyOwner {
+    function unpause() external override {
+        _requireOwner();
         _unpause();
     }
 
@@ -652,7 +657,7 @@ contract Tokenizacion is
      * @dev Prevents creating sales that start too far in the future (>2 years)
      * @param config_ Configuration to validate
      */
-    function _validateConfig(TokenizacionParams calldata config_) private pure {
+    function _validateConfig(TokenizacionParams calldata config_) private view {
         if (config_.totalTokens == 0) revert InvalidConfig();
         if (config_.pricePerToken == 0) revert InvalidConfig();
 
