@@ -275,18 +275,11 @@ contract Platform is Ownable, ReentrancyGuard {
     ) external onlyOwner {
         if (implementation == address(0)) revert InvalidImplementation();
 
-        bytes32 typeHash;
+        bytes32 typeHash = keccak256(bytes(contractType));
 
-        // Optimización con assembly para calcular hash del string calldata
-        assembly {
-            // contractType.offset es la posición en calldata donde comienza el string
-            // contractType.length es la longitud del string
-            typeHash := keccak256(contractType.offset, contractType.length)
-        }
-
-        if (typeHash == keccak256(bytes("NATILLERA"))) {
+        if (typeHash == keccak256("NATILLERA")) {
             natilleraImplementation = implementation;
-        } else if (typeHash == keccak256(bytes("TOKENIZACION"))) {
+        } else if (typeHash == keccak256("TOKENIZACION")) {
             tokenizacionImplementation = implementation;
         } else {
             revert InvalidImplementation();

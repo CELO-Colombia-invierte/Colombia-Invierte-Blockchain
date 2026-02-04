@@ -1,176 +1,162 @@
-<img src="https://raw.githubusercontent.com/defi-wonderland/brand/v1.0.0/external/solidity-foundry-boilerplate-banner.png" alt="wonderland banner" align="center" />
-<br />
+# 🏗️ Platform Contracts — MVP V1
 
-<div align="center"><strong>Start your next Solidity project with Foundry in seconds</strong></div>
-<div align="center">A highly scalable foundation focused on DX and best practices</div>
+Smart contracts for a simple on-chain platform that deploys:
 
-<br />
+- **Natillera** (savings pool)
+- **Tokenizacion** (fixed-price token sale)
 
-## Features
+Using a **factory pattern** (`Platform`) with **EIP-1167 minimal proxies** for gas-efficient deployments.
 
-<dl>
-  <dt>Sample contracts</dt>
-  <dd>Basic Greeter contract with an external interface.</dd>
+---
 
-  <dt>Foundry setup</dt>
-  <dd>Foundry configuration with multiple custom profiles and remappings.</dd>
+## 📦 Tech Stack
 
-  <dt>Deployment scripts</dt>
-  <dd>Sample scripts to deploy contracts on both mainnet and testnet.</dd>
+- Solidity `^0.8.30`
+- Foundry
+- OpenZeppelin
+- Celo (Alfajores Testnet)
 
-  <dt>Sample Integration, Unit, Property-based fuzzed and symbolic tests</dt>
-  <dd>Example tests showcasing mocking, assertions and configuration for mainnet forking. As well it includes everything needed in order to check code coverage.</dd>
-  <dd>Unit tests are built based on the <a href="https://twitter.com/PaulRBerg/status/1682346315806539776">Branched-Tree Technique</a>, using <a href="https://github.com/alexfertel/bulloak">Bulloak</a>.
+---
 
-  <dt>Linter</dt>
-  <dd>Simple and fast solidity linting thanks to forge fmt.</dd>
-  <dd>Find missing natspec automatically.</dd>
+## 🧱 Architecture Overview
 
-  <dt>Github workflows CI</dt>
-  <dd>Run all tests and see the coverage as you push your changes.</dd>
-  <dd>Export your Solidity interfaces and contracts as packages, and publish them to NPM.</dd>
-</dl>
+Platform (Factory)
+│
+├── Natillera (implementation)
+│ └── cloned per project
+│
+└── Tokenizacion (implementation)
+└── cloned per project
 
-## Setup
+### Key Design Decisions
 
-1. Install Foundry by following the instructions from [their repository](https://github.com/foundry-rs/foundry#installation).
-2. Copy the `.env.example` file to `.env` and fill in the variables.
-3. Install rust dependencies with [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):
-   1. `cargo install lintspec`
-   2. `cargo install bulloak`
-4. Install the dependencies by running: `yarn install`. In case there is an error with the commands, run `foundryup` and try them again.
+- **Factory + Clones (EIP-1167)**  
+  Cheap deployments, upgradeable at the factory level.
+- **MVP V1 scope**
+  - No user registry
+  - No upgrade proxies per project
+  - Fixed deployment fee
+- **Creator-based permissions**
+  - Each project has a `creator`
+  - Platform is only responsible for deployment
 
-## Build
+---
 
-The default way to build the code is suboptimal but fast, you can run it via:
+## 🧠 Contracts
 
-```bash
-yarn build
-```
+### Platform.sol
 
-In order to build a more optimized code ([via IR](https://docs.soliditylang.org/en/v0.8.15/ir-breaking-changes.html#solidity-ir-based-codegen-changes)), run:
+Factory contract that:
 
-```bash
-yarn build:optimized
-```
+- Deploys Natillera & Tokenizacion clones
+- Collects a fixed ETH deployment fee
+- Tracks projects by incremental `projectId`
 
-## Running tests
+Main functions:
 
-Unit tests should be isolated from any externalities, while Integration usually run in a fork of the blockchain. In this boilerplate you will find example of both.
+- `deployNatillera(...)`
+- `deployTokenizacion(...)`
+- `updateFee(...)`
+- `updateImplementation(...)`
 
-In order to run both unit and integration tests, run:
+---
 
-```bash
-yarn test
-```
+### Natillera.sol
 
-In order to just run unit tests, run:
+Savings pool contract (MVP V1):
 
-```bash
-yarn test:unit
-```
+- Fixed contribution cycles
+- Cycle-based accounting
+- Manual or automatic finalization (anti-funds-locking)
 
-In order to run unit tests and run way more fuzzing than usual (5x), run:
+---
 
-```bash
-yarn test:unit:deep
-```
+### Tokenizacion.sol
 
-In order to just run integration tests, run:
+Fixed-price token sale:
 
-```bash
-yarn test:integration
-```
+- ERC20 or native ETH payments
+- Time-based sale window
+- Manual finalization
+- Creator withdraws collected funds
 
-In order to check your current code coverage, run:
+---
 
-```bash
-yarn coverage
-```
+## 🧪 Tests
 
-In order to create a new `.t.sol` file from a `.tree` bulloak file, run:
+Run all tests:
 
 ```bash
-yarn test:bulloak:scaffold
+forge test
+
+Covered in MVP V1:
+
+    Deployment & initialization
+
+    Basic happy paths
+
+    Time-based restrictions
+
+    Minimal revert conditions
+
+    Note: Edge cases and stress tests are intentionally deferred to later phases.
+
+🚀 Deployment (Celo Alfajores)
+Environment variables
+
+export PRIVATE_KEY=0xYOUR_PRIVATE_KEY
+export RPC_URL=https://alfajores-forno.celo-testnet.org
+
+Deploy script
+
+forge script script/Deploy.s.sol:DeployAlfajores \
+  --rpc-url $RPC_URL \
+  --broadcast
+
+Contracts deployed:
+
+    Natillera (implementation)
+
+    Tokenizacion (implementation)
+
+    Platform (factory)
+
+📤 Post-Deploy Checklist
+
+    Export ABIs (out/*.json)
+
+    Backend:
+
+        Install dependencies
+
+        Create services to interact with Platform
+
+    Frontend:
+
+        Consume Platform events
+
+        Instantiate projects
+
+    Document deployed addresses
+
+⚠️ MVP V1 Limitations
+
+    No upgradeability per project
+
+    No emergency pause
+
+    No role system
+
+    No treasury split
+
+These are explicit design choices for MVP V1.
+🛣️ Roadmap
+
+    MVP 1.5: Hardening + extra tests
+
+    MVP 2: Roles, registry, pausability
+
+    Audit & Mainnet
+
+Built with ❤️ and gas awareness.
 ```
-
-In order to fix or add missing tests to a `.t.sol` file after changing a `.tree` bulloak file, run:
-
-```bash
-yarn test:bulloak:fix
-```
-
-<br>
-
-## Deploy & verify
-
-### Setup
-
-Configure the `.env` variables and source them:
-
-```bash
-source .env
-```
-
-Import your private keys into Foundry's encrypted keystore:
-
-```bash
-cast wallet import $MAINNET_DEPLOYER_NAME --interactive
-```
-
-```bash
-cast wallet import $SEPOLIA_DEPLOYER_NAME --interactive
-```
-
-### Sepolia
-
-```bash
-yarn deploy:sepolia
-```
-
-### Mainnet
-
-```bash
-yarn deploy:mainnet
-```
-
-The deployments are stored in ./broadcast
-
-See the [Foundry Book for available options](https://book.getfoundry.sh/reference/forge/forge-create.html).
-
-## Export And Publish
-
-Export TypeScript interfaces from Solidity contracts and interfaces providing compatibility with TypeChain. Publish the exported packages to NPM.
-
-To enable this feature, make sure you've set the `NPM_TOKEN` on your org's secrets. Then set the job's conditional to `true`:
-
-```yaml
-jobs:
-  export:
-    name: Generate Interfaces And Contracts
-    # Remove the following line if you wish to export your Solidity contracts and interfaces and publish them to NPM
-    if: true
-    ...
-```
-
-Also, remember to update the `package_name` param to your package name:
-
-```yaml
-- name: Export Solidity - ${{ matrix.export_type }}
-  uses: defi-wonderland/solidity-exporter-action@1dbf5371c260add4a354e7a8d3467e5d3b9580b8
-  with:
-    # Update package_name with your package name
-    package_name: "my-cool-project"
-    ...
-
-
-- name: Publish to NPM - ${{ matrix.export_type }}
-  # Update `my-cool-project` with your package name
-  run: cd export/my-cool-project-${{ matrix.export_type }} && npm publish --access public
-  ...
-```
-
-You can take a look at our [solidity-exporter-action](https://github.com/defi-wonderland/solidity-exporter-action) repository for more information and usage examples.
-
-## Licensing
-The primary license for the boilerplate is MIT, see [`LICENSE`](https://github.com/defi-wonderland/solidity-foundry-boilerplate/blob/main/LICENSE)
