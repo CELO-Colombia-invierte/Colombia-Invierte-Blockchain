@@ -1,127 +1,208 @@
-pragma solidity 0.8.30;
-
-import {IPlatform} from 'interfaces/IPlatform.sol';
-import {ITracking} from 'interfaces/ITracking.sol';
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
 
 /**
- * @title Natillera Contract
- * @author K-Labs
- * @notice This is a contract for the natillera of a project
+ * @title INatillera
+ * @notice Interface for savings pool with monthly contributions
+ * @dev MVP V1: Simple pool where members contribute monthly, receive proportional share at maturity
  */
-interface INatillera is ITracking {
-  /*///////////////////////////////////////////////////////////////
-                            DATA STRUCTS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice NatilleraConfig struct set by the creator of the natillera
-   * @param token The token of the natillera (if native token, address(0))
-   * @param cuotaPorMes The monthly contribution per month per member
-   * @param cantidadDeMeses The number of months of the contribution period (30 dias por cada mes)
-   */
-  struct NatilleraConfig {
-    address token;
-    uint256 cuotaPorMes;
-    uint256 cantidadDeMeses;
-  }
+interface INatillera {
+    /*///////////////////////////////////////////////////////////////
+                                STRUCTS
+    //////////////////////////////////////////////////////////////*/
 
-  /*///////////////////////////////////////////////////////////////
-                            EVENTS
-  //////////////////////////////////////////////////////////////*/
+    /**
+     * @notice Pool configuration structure
+     * @param token ERC20 token for contributions (stablecoin)
+     * @param monthlyContribution Monthly amount per member (in token decimals)
+     * @param totalMonths Total duration in months
+     * @param maxMembers Maximum number of members allowed
+     */
+    struct Config {
+        address token;
+        uint256 monthlyContribution;
+        uint256 totalMonths;
+        uint256 maxMembers;
+    }
 
-  /**
-   * @notice Event emitted when a deposit is made
-   * @param _member The member address of the member who made the deposit
-   * @param _amount The amount of the deposit
-   * @param _upToDate True if the deposit is up to date, false otherwise
-   */
-  event Deposit(address indexed _member, uint256 indexed _amount, bool indexed _upToDate);
+    /**
+     * @notice Project information structure
+     * @param platform Platform contract address
+     * @param projectId Unique project identifier
+     * @param creator Project creator address
+     */
+    struct ProjectInfo {
+        address platform;
+        uint256 projectId;
+        address creator;
+    }
 
-  /*///////////////////////////////////////////////////////////////
-                            ERRORS
-  //////////////////////////////////////////////////////////////*/
+    /*///////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
 
-  /// @notice Error emitted when the deposit does not match the contribution amount
-  error Natillera_InvalidDeposit();
-  /// @notice Error emitted when the payment submitted is over the amount due
-  error Natillera_OverPayment();
-  /// @notice Error emitted when the member is not a member of the natillera
-  error Natillera_NotMember();
+    /// @notice Error emitted when the caller is not a member of the pool
+    error NotMember();
+    /// @notice Error emitted when trying to add an address that is already a member
+    error AlreadyMember();
+    /// @notice Error emitted when a member tries to pay for a cycle they've already paid
+    error AlreadyPaid();
+    /// @notice Error emitted when trying to perform an action after the pool has ended
+    error PoolEnded();
+    /// @notice Error emitted when trying to add more members than the maximum allowed
+    error MaxMembersReached();
+    /// @notice Error emitted when trying to withdraw before the pool is finalized
+    error NotFinalized();
+    /// @notice Error emitted when a member tries to withdraw after already withdrawing their share
+    error AlreadyWithdrawn();
+    /// @notice Error emitted when an invalid token address is provided
+    error InvalidToken();
+    /// @notice Error emitted when an invalid contribution amount is provided
+    error InvalidAmount();
+    /// @notice Error emitted when trying to initialize an already initialized pool
+    error AlreadyInitialized();
 
-  /*///////////////////////////////////////////////////////////////
-                            LOGIC FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Initializes the natillera
-   * @param _comienzo The start timestamp of the natillera (due date of the first cycle/payment)
-   * @param _config The configuration of the natillera
-   * @param _govConfig The governance configuration for the natillera
-   * @param _projectConfig The project configuration for the natillera
-   */
-  function initialize(
-    uint256 _comienzo,
-    NatilleraConfig calldata _config,
-    IPlatform.GovernanceConfig calldata _govConfig,
-    IPlatform.ProjectConfig calldata _projectConfig
-  ) external;
+    /*///////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Tracks the contribution of a member
-   * @param _member The member address of the member to track the contribution of
-   * @return _amountPaid The amount paid for the contribution
-   * @return _amountDue The amount due for the contribution
-   * @return _missedCycles The number of missed cycles for the contribution
-   */
-  function trackContribution(address _member)
-    external
-    returns (uint256 _amountPaid, uint256 _amountDue, uint256 _missedCycles);
+    /**
+     * @notice Event emitted when a member makes a monthly deposit
+     * @param member Address of the member who deposited
+     * @param amount Amount deposited (in token decimals)
+     * @param cycle Current contribution cycle (month)
+     * @dev Emitted in the `deposit()` function
+     */
+    event Deposit(address indexed member, uint256 amount, uint256 cycle);
 
-  /*///////////////////////////////////////////////////////////////
-                            ACCESS CONTROL FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Deposits funds into the natillera for the current month
-   * @dev payable
-   */
-  function depositSingleCycle() external payable;
+    /**
+     * @notice Event emitted when a new member is added to the pool
+     * @param member Address of the newly added member
+     * @dev Emitted in the `addMember()` function
+     */
+    event MemberAdded(address indexed member);
 
-  /**
-   * @notice Deposits funds into the natillera for a past due cycle
-   * @dev payable
-   * @param _cycles The number of cycles to deposit for
-   */
-  function depositMultipleCycles(uint256 _cycles) external payable;
+    /**
+     * @notice Event emitted when the pool is finalized and withdrawals are enabled
+     * @param totalCollected Total amount collected in the pool (in token decimals)
+     * @dev Emitted in the `finalize()` function
+     */
+    event PoolFinalized(uint256 totalCollected);
 
-  /**
-   * @notice Adds a member to the natillera by id
-   * @dev onlyOwner
-   * @param _member The member address to add
-   */
-  function addMember(address _member) external;
+    /**
+     * @notice Event emitted when a member withdraws their proportional share
+     * @param member Address of the member who withdrew
+     * @param amount Amount withdrawn (in token decimals)
+     * @dev Emitted in the `withdraw()` function
+     */
+    event Withdrawn(address indexed member, uint256 amount);
 
-  /*///////////////////////////////////////////////////////////////
+    /*///////////////////////////////////////////////////////////////
+                            INITIALIZATION
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initialize the savings pool with configuration and project info
+     * @param startTime Timestamp when contributions start
+     * @param config_ Pool configuration parameters
+     * @param info_ Project information
+     * @dev Can only be called once per pool instance
+     */
+    function initialize(
+        uint256 startTime,
+        Config calldata config_,
+        ProjectInfo calldata info_
+    ) external;
+
+    /*///////////////////////////////////////////////////////////////
+                            CORE FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Make monthly contribution for the current cycle
+     * @dev Transfers `monthlyContribution` amount from caller to contract
+     *      Can only be called by pool members during active contribution period
+     */
+    function deposit() external;
+
+    /**
+     * @notice Add a new member to the savings pool
+     * @param member Address to add as a member
+     * @dev Can only be called by the pool creator before the pool starts
+     */
+    function addMember(address member) external;
+
+    /**
+     * @notice Finalize the pool and enable withdrawals
+     * @dev Can only be called after all contribution cycles are complete
+     *      Calculates each member's proportional share of the total collected
+     */
+    function finalize() external;
+
+    /**
+     * @notice Withdraw proportional share after finalization
+     * @dev Transfers caller's share of the total collected pool funds
+     *      Can only be called by members after pool finalization
+     */
+    function withdraw() external;
+
+    /*///////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
-  //////////////////////////////////////////////////////////////*/
-  /**
-   * @notice Returns the cycle of the natillera
-   * @return _cycle The cycle of the natillera
-   */
-  function cycle() external view returns (uint256 _cycle);
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Returns the due date of the current cycle
-   * @return _cycleDueDate The due date of the current cycle
-   */
-  function cycleDueDate() external view returns (uint256 _cycleDueDate);
+    /**
+     * @notice Get the pool configuration
+     * @return Config memory Pool configuration structure
+     */
+    function config() external view returns (Config memory);
 
-  /**
-   * @notice Returns the members of the natillera
-   * @return _members The members of the natillera
-   */
-  function members() external view returns (address[] memory _members);
+    /**
+     * @notice Get the current contribution cycle (month)
+     * @return uint256 Current cycle number (0-indexed)
+     */
+    function currentCycle() external view returns (uint256);
 
-  /**
-   * @notice Returns the configuration of the natillera
-   * @return _config The configuration of the natillera
-   */
-  function config() external view returns (NatilleraConfig memory _config);
+    /**
+     * @notice Check if an address is a member of the pool
+     * @param account Address to check
+     * @return bool True if address is a member, false otherwise
+     */
+    function isMember(address account) external view returns (bool);
+
+    /**
+     * @notice Get the total amount deposited by a specific member
+     * @param member Member address
+     * @return uint256 Total amount deposited by the member (in token decimals)
+     */
+    function deposits(address member) external view returns (uint256);
+
+    /**
+     * @notice Check if the pool has been finalized
+     * @return bool True if pool is finalized, false otherwise
+     */
+    function isFinalized() external view returns (bool);
+
+    /**
+     * @notice Get the total amount collected in the pool
+     * @return uint256 Total collected amount (in token decimals)
+     */
+    function totalCollected() external view returns (uint256);
+
+    /**
+     * @notice Check if the pool has ended (all cycles completed)
+     * @return bool True if pool has ended, false otherwise
+     */
+    function hasEnded() external view returns (bool);
+
+    /**
+     * @notice Get all member addresses
+     * @return address[] memory Array of all member addresses
+     */
+    function members() external view returns (address[] memory);
+
+    /**
+     * @notice Get the project information
+     * @return ProjectInfo memory Project information structure
+     */
+    function projectInfo() external view returns (ProjectInfo memory);
 }

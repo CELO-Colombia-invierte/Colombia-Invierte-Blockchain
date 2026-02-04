@@ -1,276 +1,334 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
-import {Ownable, Ownable2Step} from '@openzeppelin/contracts/access/Ownable2Step.sol';
-import {Clones} from '@openzeppelin/contracts/proxy/Clones.sol';
-import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
-import {INatillera} from 'interfaces/INatillera.sol';
-import {IPlatform} from 'interfaces/IPlatform.sol';
-import {ITokenizacion} from 'interfaces/ITokenizacion.sol';
+import {INatillera} from "../interfaces/INatillera.sol";
+import {ITokenizacion} from "../interfaces/ITokenizacion.sol";
 
-contract Platform is IPlatform, Ownable2Step {
-  using SafeERC20 for IERC20;
+/**
+ * @title Platform
+ * @notice Factory for deploying Natillera and Tokenizacion projects
+ * @dev MVP V1: Simple factory with fixed fee, no token registry, no user management
+ */
+contract Platform is Ownable, ReentrancyGuard {
+    using Clones for address;
 
-  /// @inheritdoc IPlatform
-  address public natilleraImpl;
-  /// @inheritdoc IPlatform
-  uint256 public natilleraVersion;
-  /// @inheritdoc IPlatform
-  address public tokenizacionImpl;
-  /// @inheritdoc IPlatform
-  uint256 public tokenizacionVersion;
+    /*///////////////////////////////////////////////////////////////
+                                CONSTANTS
+    //////////////////////////////////////////////////////////////*/
 
-  /// @inheritdoc IPlatform
-  mapping(address _token => bool _allowed) public tokenStatus;
-  /// @inheritdoc IPlatform
-  mapping(uint256 _id => address _proyecto) public proyectoPorId;
-  /// @notice Mapping of wallet to user info
-  mapping(address _wallet => Usuario _usuario) internal _userInfo;
+    /// @notice Fixed deployment fee (0.01 ETH)
+    uint256 public feeAmount = 0.01 ether;
 
-  /// @notice The unique project identifier
-  uint256 internal _uuid;
+    /*///////////////////////////////////////////////////////////////
+                                STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
 
-  /// @notice The parameters of the platform
-  PlatformParams internal _pps;
+    /// @notice Next available project ID (starts at 1)
+    uint256 private _nextProjectId = 1;
 
-  /// @notice Array of allowed tokens
-  address[] internal _registeredTokens;
+    /// @notice Natillera implementation contract address
+    address public natilleraImplementation;
 
-  /**
-   * @notice Modifier to verify the governance configuration
-   * @param _config The governance configuration to verify
-   */
-  modifier verifyConfig(GovernanceConfig memory _config) {
-    if (_config.delayDeGobierno < _pps.delayMinimo) revert Platform_InvalidParameter();
-    if (_config.quorumMinimo < _pps.quorumMinimo) revert Platform_InvalidParameter();
-    _;
-  }
+    /// @notice Tokenizacion implementation contract address
+    address public tokenizacionImplementation;
 
-  /**
-   * @notice Modifier to verify the project caller
-   * @param _projectUuid The uuid of the project
-   */
-  modifier onlyProject(uint256 _projectUuid) {
-    if (msg.sender != proyectoPorId[_projectUuid]) revert Platform_InvalidCaller();
-    _;
-  }
+    /// @notice Mapping from project ID to deployed contract address
+    mapping(uint256 => address) public getProjectById;
 
-  /**
-   * @notice Constructor of the contract
-   * @param _initialOwner The initial owner of the contract
-   * @param _natilleraImpl The implementation address of the natillera
-   * @param _tokenizacionImpl The implementation address of the tokenizacion
-   * @param _platformParams The parameters of the platform
-   */
-  constructor(
-    address _initialOwner,
-    address _natilleraImpl,
-    address _tokenizacionImpl,
-    PlatformParams memory _platformParams
-  ) Ownable(_initialOwner) {
-    _pps = _platformParams;
-    natilleraImpl = _natilleraImpl;
-    tokenizacionImpl = _tokenizacionImpl;
-    natilleraVersion = 1;
-    tokenizacionVersion = 1;
-  }
+    /*///////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
 
-  /// --- LOGIC FUNCTIONS ---
+    /**
+     * @notice Event emitted when a new Natillera pool is deployed
+     * @param natillera Address of the deployed Natillera contract
+     * @param projectId Unique project identifier
+     * @param creator Address of the project creator
+     * @dev Emitted from `deployNatillera()` function
+     */
+    event NatilleraDeployed(
+        address indexed natillera,
+        uint256 indexed projectId,
+        address creator
+    );
 
-  /// @inheritdoc IPlatform
-  function deployNatillera(
-    uint256 _comienzo,
-    INatillera.NatilleraConfig calldata _implConfig,
-    GovernanceConfig calldata _govConfig
-  ) external payable verifyConfig(_govConfig) {
-    if (msg.value < _pps.feeDeNatillera) revert Platform_InsufficientFee();
-    if (_comienzo < block.timestamp) revert Platform_InvalidParameter();
+    /**
+     * @notice Event emitted when a new Tokenizacion sale is deployed
+     * @param tokenizacion Address of the deployed Tokenizacion contract
+     * @param projectId Unique project identifier
+     * @param creator Address of the project creator
+     * @dev Emitted from `deployTokenizacion()` function
+     */
+    event TokenizacionDeployed(
+        address indexed tokenizacion,
+        uint256 indexed projectId,
+        address creator
+    );
 
-    address clone = Clones.clone(natilleraImpl);
-    INatillera(clone).initialize(_comienzo, _implConfig, _govConfig, _getProjectConfig(msg.sender));
+    /**
+     * @notice Event emitted when the deployment fee is updated
+     * @param newFee New fee amount in wei
+     * @dev Emitted from `updateFee()` function
+     */
+    event FeeUpdated(uint256 newFee);
 
-    proyectoPorId[_uuid] = clone;
-    emit DeployNatillera(clone, _uuid);
-  }
+    /**
+     * @notice Event emitted when collected fees are withdrawn
+     * @param recipient Address that received the fees
+     * @param amount Amount withdrawn in wei
+     * @dev Emitted from `withdrawFees()` function
+     */
+    event FeesWithdrawn(address recipient, uint256 amount);
 
-  /// @inheritdoc IPlatform
-  function deployTokenizacion(
-    ITokenizacion.TokenizacionParams calldata _implConfig,
-    GovernanceConfig calldata _govConfig
-  ) external verifyConfig(_govConfig) {
-    // TODO: implement percentage fee for the tokenization with ERC20 fees (not native token)
+    /**
+     * @notice Event emitted when an implementation address is updated
+     * @param contractType Type of contract ("NATILLERA" or "TOKENIZACION")
+     * @param implementation New implementation contract address
+     * @dev Emitted from `updateImplementation()` function
+     */
+    event ImplementationUpdated(string contractType, address implementation);
 
-    address clone = Clones.clone(tokenizacionImpl);
-    ITokenizacion(clone).initialize(_implConfig, _govConfig, _getProjectConfig(msg.sender));
+    /**
+     * @notice Event emitted when a fee is paid for deployment
+     * @param user Address paying the fee
+     * @param amount Fee amount paid in wei
+     * @param projectType Type of project ("NATILLERA" or "TOKENIZACION")
+     * @dev Emitted from deployment functions for debugging purposes
+     */
+    event FeePaid(
+        address indexed user,
+        uint256 amount,
+        string indexed projectType
+    );
 
-    proyectoPorId[_uuid] = clone;
-    emit DeployTokenizacion(clone, _uuid);
-  }
+    /*///////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
 
-  /// @inheritdoc IPlatform
-  function registerUsuario(bytes32 _emailHash) external {
-    if (_walletRegistered(msg.sender)) revert Platform_RegistryError();
-    _userInfo[msg.sender] = Usuario({emailHash: _emailHash, projects: new uint256[](0)});
-  }
+    /// @notice Error emitted when insufficient fee is provided for deployment
+    error InsufficientFee();
+    /// @notice Error emitted when an invalid implementation address is provided
+    error InvalidImplementation();
+    /// @notice Error emitted when an ETH transfer fails
+    error TransferFailed();
 
-  /// --- ACCESS CONTROL FUNCTIONS ---
+    /*///////////////////////////////////////////////////////////////
+                                CONSTRUCTOR
+    //////////////////////////////////////////////////////////////*/
 
-  /// @inheritdoc IPlatform
-  function addMemberToProject(uint256 _projectUuid, address _wallet) external onlyProject(_projectUuid) {
-    if (!_walletRegistered(_wallet)) revert Platform_RegistryError();
-    _userInfo[_wallet].projects.push(_projectUuid);
-  }
+    /**
+     * @notice Initialize the Platform factory with implementations
+     * @param natilleraImpl Address of the Natillera implementation contract
+     * @param tokenizacionImpl Address of the Tokenizacion implementation contract
+     * @dev Both implementation addresses must be non-zero
+     */
+    constructor(
+        address natilleraImpl,
+        address tokenizacionImpl
+    ) Ownable(msg.sender) {
+        if (natilleraImpl == address(0) || tokenizacionImpl == address(0)) {
+            revert InvalidImplementation();
+        }
 
-  /// @inheritdoc IPlatform
-  function withdrawNativeFees() external onlyOwner {
-    if (address(this).balance == 0) revert Platform_BalanceZero();
-    payable(owner()).transfer(address(this).balance);
-  }
-
-  /// @inheritdoc IPlatform
-  function withdrawERC20Fees() external onlyOwner {
-    uint256 _l = _registeredTokens.length;
-    for (uint256 i = 0; i < _l; i++) {
-      address _token = _registeredTokens[i];
-      if (_balanceGTZero(_token)) {
-        _withdrawFeesPorToken(_token);
-      }
+        natilleraImplementation = natilleraImpl;
+        tokenizacionImplementation = tokenizacionImpl;
     }
-  }
 
-  /// @inheritdoc IPlatform
-  function withdrawERC20FeesPorToken(address _token) external onlyOwner {
-    if (!_balanceGTZero(_token)) revert Platform_BalanceZero();
-    _withdrawFeesPorToken(_token);
-  }
+    /*///////////////////////////////////////////////////////////////
+                            DEPLOYMENT FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
-  /// @inheritdoc IPlatform
-  function addToken(address _token) external onlyOwner {
-    if (IERC20(_token).totalSupply() == 0) revert Platform_InvalidToken();
-    if (tokenStatus[_token]) revert Platform_RegistryError();
-    tokenStatus[_token] = true;
-    _registeredTokens.push(_token);
-    emit UpdateToken(_token, true);
-  }
+    /**
+     * @notice Deploy a new Natillera savings pool
+     * @param startTime Timestamp when contributions start
+     * @param config Pool configuration parameters
+     * @return Address of the deployed Natillera contract
+     * @dev Requires fee payment in ETH
+     * @dev Uses Clone pattern for gas-efficient deployment
+     */
+    function deployNatillera(
+        uint256 startTime,
+        INatillera.Config calldata config
+    ) external payable nonReentrant returns (address) {
+        // Validate fee payment
+        if (msg.value < feeAmount) revert InsufficientFee();
 
-  /// @inheritdoc IPlatform
-  function removeToken(address _token) external onlyOwner {
-    if (!tokenStatus[_token]) revert Platform_RegistryError();
-    tokenStatus[_token] = false;
-    _removeTokenFromRegistry(_token);
-    emit UpdateToken(_token, false);
-  }
+        // Emit fee event for debugging
+        emit FeePaid(msg.sender, feeAmount, "NATILLERA");
 
-  /// @inheritdoc IPlatform
-  function updateParameter(bytes32 _parameter, uint256 _value) external onlyOwner {
-    if (_parameter == 'FEE_DE_NATILLERA') _pps.feeDeNatillera = _value;
-    else if (_parameter == 'FEE_DE_TOKENIZACION') _pps.feeDeTokenizacion = _value;
-    else if (_parameter == 'FEE_DE_WITHDRAWAL') _pps.feeDeWithdrawal = _value;
-    else if (_parameter == 'DELAY_MINIMO') _pps.delayMinimo = _value;
-    else if (_parameter == 'QUORUM_MINIMO') _pps.quorumMinimo = _value;
-    else revert Platform_InvalidParameter();
-  }
+        // Refund excess ETH if any
+        if (msg.value > feeAmount) {
+            _safeTransferEth(msg.sender, msg.value - feeAmount);
+        }
 
-  /// @inheritdoc IPlatform
-  function updateImplementation(address _implementation, bytes32 _type) external onlyOwner {
-    _setImplementation(_implementation, _type);
-  }
+        // Get and increment project ID
+        uint256 projectId = _nextProjectId++;
 
-  /// --- VIEW FUNCTIONS ---
+        // Clone the implementation using EIP-1167 minimal proxy
+        address clone = natilleraImplementation.clone();
 
-  /// @inheritdoc IPlatform
-  function parameters() external view returns (PlatformParams memory _params) {
-    return _pps;
-  }
+        // Prepare project information
+        INatillera.ProjectInfo memory info = INatillera.ProjectInfo({
+            platform: address(this),
+            projectId: projectId,
+            creator: msg.sender
+        });
 
-  /// @inheritdoc IPlatform
-  function tokens() external view returns (address[] memory _tokens) {
-    _tokens = _registeredTokens;
-  }
+        // Initialize the cloned Natillera contract
+        INatillera(clone).initialize(startTime, config, info);
 
-  /// @inheritdoc IPlatform
-  function getBalancePorToken(address _token) external view returns (uint256 _balance) {
-    return _getBalancePorToken(_token);
-  }
+        // Store reference for lookup
+        getProjectById[projectId] = clone;
 
-  /// @inheritdoc IPlatform
-  function getUserInfo(address _wallet) external view returns (Usuario memory _usuario) {
-    return _userInfo[_wallet];
-  }
-
-  /// --- INTERNAL FUNCTIONS ---
-
-  /**
-   * @notice Withdraws the fees for a specific token
-   * @param _token The token to withdraw the fees from
-   */
-  function _withdrawFeesPorToken(address _token) internal {
-    uint256 _amount = _getBalancePorToken(_token);
-    IERC20(_token).safeTransfer(owner(), _amount);
-  }
-
-  /**
-   * @notice Sets the implementation of the contract
-   * @param _implementation The implementation to be set
-   * @param _type The type of the implementation (e.g. 'NATILLERA' or 'TOKENIZACION')
-   */
-  function _setImplementation(address _implementation, bytes32 _type) internal {
-    if (_type == 'NATILLERA') {
-      natilleraImpl = _implementation;
-      ++natilleraVersion;
-    } else if (_type == 'TOKENIZACION') {
-      tokenizacionImpl = _implementation;
-      ++tokenizacionVersion;
-    } else {
-      revert Platform_InvalidParameter();
+        emit NatilleraDeployed(clone, projectId, msg.sender);
+        return clone;
     }
-  }
 
-  /**
-   * @notice Removes a token from the registered tokens
-   * @param _token The token to remove
-   */
-  function _removeTokenFromRegistry(address _token) internal {
-    uint256 _l = _registeredTokens.length;
-    for (uint256 i = 0; i < _l; i++) {
-      if (_registeredTokens[i] == _token) {
-        _registeredTokens[i] = _registeredTokens[_l - 1];
-        _registeredTokens.pop();
-        break;
-      }
+    /**
+     * @notice Deploy a new Tokenizacion sale contract
+     * @param config Sale configuration parameters
+     * @return Address of the deployed Tokenizacion contract
+     * @dev Requires fee payment in ETH
+     * @dev Uses Clone pattern for gas-efficient deployment
+     */
+    function deployTokenizacion(
+        ITokenizacion.Config calldata config
+    ) external payable nonReentrant returns (address) {
+        // Validate fee payment
+        if (msg.value < feeAmount) revert InsufficientFee();
+
+        // Emit fee event for debugging
+        emit FeePaid(msg.sender, feeAmount, "TOKENIZACION");
+
+        // Refund excess ETH if any
+        if (msg.value > feeAmount) {
+            _safeTransferEth(msg.sender, msg.value - feeAmount);
+        }
+
+        // Get and increment project ID
+        uint256 projectId = _nextProjectId++;
+
+        // Clone the implementation using EIP-1167 minimal proxy
+        address clone = tokenizacionImplementation.clone();
+
+        // Prepare project information
+        ITokenizacion.ProjectInfo memory info = ITokenizacion.ProjectInfo({
+            platform: address(this),
+            projectId: projectId,
+            creator: msg.sender
+        });
+
+        // Initialize the cloned Tokenizacion contract
+        ITokenizacion(clone).initialize(config, info);
+
+        // Store reference for lookup
+        getProjectById[projectId] = clone;
+
+        emit TokenizacionDeployed(clone, projectId, msg.sender);
+        return clone;
     }
-  }
 
-  /**
-   * @notice Gets the project configuration
-   * @param _creator The creator of the project
-   * @return _projectConfig The project configuration
-   */
-  function _getProjectConfig(address _creator) internal returns (ProjectConfig memory _projectConfig) {
-    ++_uuid;
-    _projectConfig = ProjectConfig({uuid: _uuid, creator: _creator, platform: address(this)});
-  }
+    /*///////////////////////////////////////////////////////////////
+                            ADMIN FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
-  /**
-   * @notice Gets the balance of a token
-   * @param _token The token to get the balance of
-   * @return _balance The balance of the token
-   */
-  function _getBalancePorToken(address _token) internal view returns (uint256 _balance) {
-    _balance = IERC20(_token).balanceOf(address(this));
-  }
+    /**
+     * @notice Update the deployment fee amount
+     * @param newFee New fee amount in wei
+     * @dev Can only be called by contract owner
+     */
+    function updateFee(uint256 newFee) external onlyOwner {
+        feeAmount = newFee;
+        emit FeeUpdated(newFee);
+    }
 
-  /**
-   * @notice Checks if the balance of a token is greater than zero
-   * @param _token The token to check the balance of
-   * @return _isGTZero True if the balance is greater than zero, false otherwise
-   */
-  function _balanceGTZero(address _token) internal view returns (bool _isGTZero) {
-    _isGTZero = _getBalancePorToken(_token) > 0;
-  }
+    /**
+     * @notice Withdraw all collected deployment fees
+     * @param recipient Address to receive the collected fees
+     * @dev Can only be called by contract owner
+     * @dev Requires non-zero balance in contract
+     */
+    function withdrawFees(
+        address payable recipient
+    ) external onlyOwner nonReentrant {
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert InsufficientFee();
 
-  function _walletRegistered(address _wallet) internal view returns (bool _isRegistered) {
-    _isRegistered = _userInfo[_wallet].emailHash != bytes32(0);
-  }
+        _safeTransferEth(recipient, balance);
+        emit FeesWithdrawn(recipient, balance);
+    }
+
+    /**
+     * @notice Update implementation contract address
+     * @param contractType Type of contract ("NATILLERA" or "TOKENIZACION")
+     * @param implementation New implementation contract address
+     * @dev Can only be called by contract owner
+     * @dev Implementation address must be non-zero
+     */
+    function updateImplementation(
+        string calldata contractType,
+        address implementation
+    ) external onlyOwner {
+        if (implementation == address(0)) revert InvalidImplementation();
+
+        bytes32 typeHash;
+
+        // Optimización con assembly para calcular hash del string calldata
+        assembly {
+            // contractType.offset es la posición en calldata donde comienza el string
+            // contractType.length es la longitud del string
+            typeHash := keccak256(contractType.offset, contractType.length)
+        }
+
+        if (typeHash == keccak256(bytes("NATILLERA"))) {
+            natilleraImplementation = implementation;
+        } else if (typeHash == keccak256(bytes("TOKENIZACION"))) {
+            tokenizacionImplementation = implementation;
+        } else {
+            revert InvalidImplementation();
+        }
+
+        emit ImplementationUpdated(contractType, implementation);
+    }
+
+    /*///////////////////////////////////////////////////////////////
+                            VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Get total number of deployed projects
+     * @return uint256 Total count of deployed projects
+     */
+    function totalProjects() external view returns (uint256) {
+        return _nextProjectId - 1;
+    }
+
+    /*///////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @dev Safely transfer ETH to a recipient address
+     * @param to Recipient address
+     * @param amount Amount to transfer in wei
+     * @notice Reverts if transfer fails
+     */
+    function _safeTransferEth(address to, uint256 amount) internal {
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert TransferFailed();
+    }
+
+    /*///////////////////////////////////////////////////////////////
+                            FALLBACK FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Allow contract to receive ETH payments
+     * @dev Required for fee collection
+     */
+    receive() external payable {}
 }
