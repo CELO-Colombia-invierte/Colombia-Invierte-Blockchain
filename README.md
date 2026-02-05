@@ -50,12 +50,12 @@ All contracts are verified on [Celoscan](https://sepolia.celoscan.io).
 
 ### Implementations
 
-- **Natillera Implementation**: `0x3d18dBb583c0DaEfeD73882DFb0CF74A49C4c482`
-- **Tokenizacion Implementation**: `0x8a2c0F81a7B281b24f55f36569887993f5955D6A`
+- **Natillera Implementation**: `0x86512228C805dDa61CE8Fd206e102f2D3896eC32`
+- **Tokenizacion Implementation**: `0x4aC6D7F58Dba458eA74179c826378B5ba5fB3179`
 
 ### Platform (Factory)
 
-- **Platform**: `0x151aD264F58204267d23814B220514182aA4C56a`
+- **Platform**: `0xbe919DccE1218E2C5e17dc3409aEb3EF38f049A4`
 
 ---
 
