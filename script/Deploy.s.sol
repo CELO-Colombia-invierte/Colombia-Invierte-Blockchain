@@ -4,9 +4,9 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
-import {Platform} from "../src/contracts/Platform.sol";
-import {Natillera} from "../src/contracts/Natillera.sol";
-import {Tokenizacion} from "../src/contracts/Tokenizacion.sol";
+import {Platform} from "../src/contracts/v1/Platform.sol";
+import {Natillera} from "../src/contracts/v1/Natillera.sol";
+import {Tokenizacion} from "../src/contracts/v1/Tokenizacion.sol";
 
 contract DeployAlfajores is Script {
     function run() external {

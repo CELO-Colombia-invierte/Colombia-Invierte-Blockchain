@@ -5,8 +5,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
-import {INatillera} from "../interfaces/INatillera.sol";
-import {ITokenizacion} from "../interfaces/ITokenizacion.sol";
+import {INatillera} from "../../interfaces/v1/INatillera.sol";
+import {ITokenizacion} from "../../interfaces/v1/ITokenizacion.sol";
 
 /**
  * @title Platform
