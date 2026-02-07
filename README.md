@@ -1,3 +1,21 @@
+> ⚠️ **Status: MVP V1 — Legacy / Stable**
+>
+> This version represents the **first functional MVP** of the platform.
+> It is **feature-complete for V1**, deployed on testnet, and currently being
+> integrated with backend and frontend.
+>
+> 🔒 **Frozen scope**
+>
+> - No new features will be added.
+> - Only critical bug fixes or security patches are allowed.
+>
+> 🧭 **Next iteration**
+>
+> - Active development continues on **MVP V2** under the `release/mvp-v2` branch.
+> - MVP V2 introduces a redesigned architecture (custody phases, governance, vaults).
+>
+> If you are starting new development, **do not build on top of V1**.
+
 # 🏗️ Platform Contracts — MVP V1
 
 Smart contracts for a simple on-chain platform that deploys:
