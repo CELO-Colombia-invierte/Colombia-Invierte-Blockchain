@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Tokenizacion} from "../../src/contracts/v1/Tokenizacion.sol";
 import {ITokenizacion} from "../../src/interfaces/v1/ITokenizacion.sol";
-import {MockERC20} from "../mocks/v1/MockERC20.sol";
+import {MockERC20} from "../../src/contracts/mocks/shared/MockERC20.sol";
 
 contract TokenizacionTest is Test {
     Tokenizacion sale;

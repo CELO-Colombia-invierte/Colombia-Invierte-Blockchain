@@ -2,15 +2,12 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-
 import {Platform} from "../../src/contracts/v1/Platform.sol";
 import {Natillera} from "../../src/contracts/v1/Natillera.sol";
 import {Tokenizacion} from "../../src/contracts/v1/Tokenizacion.sol";
-
 import {INatillera} from "../../src/interfaces/v1/INatillera.sol";
 import {ITokenizacion} from "../../src/interfaces/v1/ITokenizacion.sol";
-
-import {MockERC20} from "../mocks/v1/MockERC20.sol";
+import {MockERC20} from "../../src/contracts/mocks/shared/MockERC20.sol";
 
 contract PlatformTest is Test {
     /*///////////////////////////////////////////////////////////////
