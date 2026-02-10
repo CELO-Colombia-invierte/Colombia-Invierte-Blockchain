@@ -27,6 +27,12 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
     error InsufficientBalance();
     /// @notice The specified address is zero
     error ZeroAddress();
+    /// @notice The vault is currently locked and cannot perform the operation
+    error VaultLocked();
+    /// @notice The vault is currently active and cannot perform the operation
+    error VaultNotActive();
+    /// @notice The vault is closed and cannot perform the operation
+    error VaultClosed();
 
     /*//////////////////////////////////////////////////////////////
                                 ROLES
@@ -138,8 +144,11 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
      * @notice Deposit ERC20 tokens into the vault
      * @dev Only allowed while state == Locked
      */
-    function deposit(address token, uint256 amount) external whenNotPaused {
-        if (state != VaultState.Locked) revert InvalidState();
+    function deposit(
+        address token,
+        uint256 amount
+    ) external whenNotPaused nonReentrant {
+        if (state != VaultState.Locked) revert VaultClosed();
         if (!isTokenAllowed[token]) revert TokenNotAllowed();
         if (amount == 0) revert ZeroAmount();
 
@@ -157,7 +166,7 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
      * @dev Callable once by controller
      */
     function activate() external onlyRole(CONTROLLER_ROLE) {
-        if (state != VaultState.Locked) revert InvalidState();
+        if (state != VaultState.Locked) revert VaultClosed();
 
         state = VaultState.Active;
         emit Activated();
@@ -186,8 +195,8 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
         address token,
         address to,
         uint256 amount
-    ) external nonReentrant whenNotPaused onlyRole(GOVERNANCE_ROLE) {
-        if (state != VaultState.Active) revert InvalidState();
+    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+        if (state != VaultState.Active) revert VaultNotActive();
         if (amount == 0) revert ZeroAmount();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
