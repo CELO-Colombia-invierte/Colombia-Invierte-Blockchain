@@ -65,6 +65,11 @@ interface IProjectVault {
      */
     function release(address token, address to, uint256 amount) external;
 
+    /*
+     * @notice Resolves a dispute by releasing funds to a specified address. Can only be called by the dispute resolver.
+     */
+    function canResolveDispute(address account) external view returns (bool);
+
     /*//////////////////////////////////////////////////////////////
                         EMERGENCY CONTROL
     //////////////////////////////////////////////////////////////*/

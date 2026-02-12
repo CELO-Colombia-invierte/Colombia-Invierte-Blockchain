@@ -208,6 +208,17 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
+                        DISPUTE RESOLUTION
+    //////////////////////////////////////////////////////////////*/
+    /**
+     * @notice Check if an account can resolve disputes
+     * @dev Only accounts with GOVERNANCE_ROLE can resolve disputes
+     */
+    function canResolveDispute(address account) external view returns (bool) {
+        return hasRole(GOVERNANCE_ROLE, account);
+    }
+
+    /*//////////////////////////////////////////////////////////////
                         EMERGENCY CONTROL
     //////////////////////////////////////////////////////////////*/
 
