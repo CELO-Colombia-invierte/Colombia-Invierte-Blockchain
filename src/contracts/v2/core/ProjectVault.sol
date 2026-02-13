@@ -1,133 +1,111 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
- * @title ProjectVault
- * @notice Custody contract for project funds (V2)
- * @dev The Vault holds funds and releases them only when authorized.
- *      It contains NO business logic, governance, or milestone validation.
+ * @title ProjectVault (V2)
+ * @notice Single custody layer for V2 projects.
+ * @dev Clonable via EIP-1167. Contains NO business logic.
  */
-contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
+contract ProjectVault is
+    Initializable,
+    AccessControlUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuardUpgradeable
+{
     using SafeERC20 for IERC20;
+
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
-    /// @notice The operation is not allowed in the current state
-    error InvalidState();
-    /// @notice The specified token is not allowed for deposits
-    error TokenNotAllowed();
-    /// @notice The specified amount is zero
-    error ZeroAmount();
-    /// @notice The vault has insufficient balance for the requested release
-    error InsufficientBalance();
-    /// @notice The specified address is zero
+
     error ZeroAddress();
-    /// @notice The vault is currently locked and cannot perform the operation
-    error VaultLocked();
-    /// @notice The vault is currently active and cannot perform the operation
+    error ZeroAmount();
+    error InvalidState();
+    error TokenNotAllowed();
+    error InsufficientBalance();
     error VaultNotActive();
-    /// @notice The vault is closed and cannot perform the operation
-    error VaultClosed();
+    error VaultNotLocked();
 
     /*//////////////////////////////////////////////////////////////
                                 ROLES
     //////////////////////////////////////////////////////////////*/
-    /// @notice Role identifier for the controller (project contract)
+
     bytes32 public constant CONTROLLER_ROLE = keccak256("CONTROLLER_ROLE");
-    /// @notice Role identifier for governance actions
     bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
-    /// @notice Role identifier for emergency guardian
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
     /*//////////////////////////////////////////////////////////////
-                                ENUMS
+                                STATE
     //////////////////////////////////////////////////////////////*/
-    /**
-     * @notice Vault states
-     * - Locked: Funds can be deposited, not released
-     * - Active: Funds can be released
-     * - Closed: Terminal state
-     */
+
     enum VaultState {
         Locked,
         Active,
         Closed
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Current vault state
     VaultState public state;
 
-    /// @notice Project contract controlling this vault (NatilleraV2 / TokenizacionV2)
-    address public immutable PROJECT;
+    /// @notice Project contract wired post-clone
+    address public project;
 
-    /// @notice Whitelisted ERC20 tokens
     mapping(address => bool) public isTokenAllowed;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
-    /**
-     * @notice Emitted when tokens are deposited into the vault
-     */
+
+    event VaultInitialized(address indexed project, address indexed governance);
     event Deposited(
         address indexed token,
         address indexed from,
         uint256 amount
     );
-    /**
-     * @notice Emitted when the vault is activated
-     */
     event Activated();
-    /**
-     * @notice Emitted when tokens are released from the vault
-     */
     event Released(address indexed token, address indexed to, uint256 amount);
-    /**
-     * @notice Emitted when the vault is closed
-     */
     event Closed();
-    /**
-     * @notice Emitted when a token's allowed status is changed
-     */
     event TokenAllowed(address indexed token, bool allowed);
 
     /*//////////////////////////////////////////////////////////////
-                            CONSTRUCTOR
+                                INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @param project_ Address of the controlling project contract
-     * @param admin Address receiving DEFAULT_ADMIN_ROLE
-     */
-    constructor(address project_, address admin) {
-        if (project_ == address(0) || admin == address(0)) revert ZeroAddress();
-        PROJECT = project_;
+    function initialize(
+        address project_,
+        address governance_,
+        address guardian_
+    ) external initializer {
+        if (
+            project_ == address(0) ||
+            governance_ == address(0) ||
+            guardian_ == address(0)
+        ) revert ZeroAddress();
 
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(CONTROLLER_ROLE, project_);
-        _grantRole(GOVERNANCE_ROLE, admin);
-        _grantRole(GUARDIAN_ROLE, admin);
+        __AccessControl_init();
+        __Pausable_init();
+        __ReentrancyGuard_init();
 
+        project = project_;
         state = VaultState.Locked;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, governance_);
+        _grantRole(GOVERNANCE_ROLE, governance_);
+        _grantRole(GUARDIAN_ROLE, guardian_);
+        _grantRole(CONTROLLER_ROLE, project_);
+
+        emit VaultInitialized(project_, governance_);
     }
 
     /*//////////////////////////////////////////////////////////////
                         TOKEN CONFIGURATION
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Allow or disallow a token for deposits
-     * @dev Governance-controlled
-     */
     function setTokenAllowed(
         address token,
         bool allowed
@@ -137,45 +115,38 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DEPOSIT LOGIC
+                            DEPOSIT
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Deposit ERC20 tokens into the vault
-     * @dev Only allowed while state == Locked
+     * @notice Deposits tokens on behalf of a user
+     * @dev Only callable by the project contract
      */
-    function deposit(
+    function depositFrom(
+        address from,
         address token,
         uint256 amount
-    ) external whenNotPaused nonReentrant {
-        if (state != VaultState.Locked) revert VaultClosed();
+    ) external whenNotPaused nonReentrant onlyRole(CONTROLLER_ROLE) {
+        if (state != VaultState.Locked) revert VaultNotLocked();
         if (!isTokenAllowed[token]) revert TokenNotAllowed();
         if (amount == 0) revert ZeroAmount();
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(token).safeTransferFrom(from, address(this), amount);
 
-        emit Deposited(token, msg.sender, amount);
+        emit Deposited(token, from, amount);
     }
 
     /*//////////////////////////////////////////////////////////////
                         STATE TRANSITIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Activate the vault (Locked → Active)
-     * @dev Callable once by controller
-     */
-    function activate() external onlyRole(CONTROLLER_ROLE) {
-        if (state != VaultState.Locked) revert VaultClosed();
+    function activate() external onlyRole(GOVERNANCE_ROLE) {
+        if (state != VaultState.Locked) revert InvalidState();
 
         state = VaultState.Active;
         emit Activated();
     }
 
-    /**
-     * @notice Permanently close the vault
-     * @dev Terminal state
-     */
     function close() external onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Active) revert InvalidState();
 
@@ -184,18 +155,14 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        FUNDS RELEASE
+                            RELEASE
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Release funds to a recipient
-     * @dev Governance-controlled execution only
-     */
     function release(
         address token,
         address to,
         uint256 amount
-    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+    ) external nonReentrant whenNotPaused onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Active) revert VaultNotActive();
         if (amount == 0) revert ZeroAmount();
 
@@ -208,32 +175,13 @@ contract ProjectVault is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DISPUTE RESOLUTION
-    //////////////////////////////////////////////////////////////*/
-    /**
-     * @notice Check if an account can resolve disputes
-     * @dev Only accounts with GOVERNANCE_ROLE can resolve disputes
-     */
-    function canResolveDispute(address account) external view returns (bool) {
-        return hasRole(GOVERNANCE_ROLE, account);
-    }
-
-    /*//////////////////////////////////////////////////////////////
                         EMERGENCY CONTROL
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Pause vault operations
-     * @dev Emergency guardian
-     */
     function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
     }
 
-    /**
-     * @notice Unpause vault operations
-     * @dev Governance-controlled
-     */
     function unpause() external onlyRole(GOVERNANCE_ROLE) {
         _unpause();
     }

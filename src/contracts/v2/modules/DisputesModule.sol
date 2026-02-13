@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
 
 /**
- * @title DisputesModule
- * @notice Implementation of the Disputes Module for the Colombia Invierte platform.
- *         This module allows users to open disputes related to project vaults and for authorized parties to resolve them.
+ * @title DisputesModule (V2)
+ * @notice Handles dispute lifecycle and emergency freezing.
+ * @dev Clonable via EIP-1167.
  */
-contract DisputesModule {
+contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
     //////////////////////////////////////////////////////////////*/
-    //// @notice Error thrown when trying to open a dispute on a vault that is not active.
+
+    error ZeroAddress();
     error NotActiveVault();
-    /// @notice Error thrown when trying to resolve a dispute that does not exist or is not open.
     error InvalidDispute();
-    /// @notice Error thrown when trying to resolve a dispute that has already been resolved.
     error AlreadyResolved();
-    /// @notice Error thrown when a caller without the necessary permissions tries to resolve a dispute.
     error Unauthorized();
 
     /*//////////////////////////////////////////////////////////////
                                 ENUMS
     //////////////////////////////////////////////////////////////*/
-    /// @notice Enum representing the status of a dispute.
+
     enum DisputeStatus {
         None,
         Open,
@@ -35,7 +35,7 @@ contract DisputesModule {
     /*//////////////////////////////////////////////////////////////
                                 STRUCTS
     //////////////////////////////////////////////////////////////*/
-    /// @notice Struct representing a dispute opened by a user.
+
     struct Dispute {
         address opener;
         string reason;
@@ -46,40 +46,51 @@ contract DisputesModule {
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
-    /// @notice Reference to the associated project vault.
-    IProjectVault public immutable vault;
-    /// @notice Counter for dispute IDs.
+
+    IProjectVault public vault;
+
+    address public governance; // autoridad que puede resolver
+
     uint256 public disputeCount;
-    /// @notice Mapping from dispute ID to Dispute details.
     mapping(uint256 => Dispute) public disputes;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
-    /// @notice Emitted when a new dispute is opened.
+
+    event DisputesInitialized(
+        address indexed vault,
+        address indexed governance
+    );
     event DisputeOpened(uint256 indexed id, address indexed opener);
-    /// @notice Emitted when a dispute is resolved.
     event DisputeResolved(uint256 indexed id, bool accepted);
 
     /*//////////////////////////////////////////////////////////////
-                                CONSTRUCTOR
+                                INITIALIZER
     //////////////////////////////////////////////////////////////*/
-    /**
-     * @notice Constructor for the DisputesModule. Initializes the module with a reference to the associated project vault.
-     * @param vault_ The address of the associated project vault.
-     */
-    constructor(address vault_) {
+
+    function initialize(
+        address vault_,
+        address governance_
+    ) external initializer {
+        if (vault_ == address(0) || governance_ == address(0))
+            revert ZeroAddress();
+
+        __ReentrancyGuard_init();
+
         vault = IProjectVault(vault_);
+        governance = governance_;
+
+        emit DisputesInitialized(vault_, governance_);
     }
 
     /*//////////////////////////////////////////////////////////////
-                            CORE LOGIC
+                                CORE LOGIC
     //////////////////////////////////////////////////////////////*/
-    /**
-     * @notice Opens a new dispute with the provided reason. The caller must be a user of an active project vault.
-     * @param reason The reason for the dispute.
-     */
-    function openDispute(string calldata reason) external returns (uint256 id) {
+
+    function openDispute(
+        string calldata reason
+    ) external nonReentrant returns (uint256 id) {
         if (vault.state() != IProjectVault.VaultState.Active)
             revert NotActiveVault();
 
@@ -92,31 +103,29 @@ contract DisputesModule {
             status: DisputeStatus.Open
         });
 
-        // Pausamos el vault automáticamente
+        // Freeze vault immediately
         vault.pause();
 
         emit DisputeOpened(id, msg.sender);
     }
 
-    /**
-     * @notice Resolves an existing dispute by its ID. The caller must have the appropriate permissions to resolve disputes.
-     * @param id The ID of the dispute to resolve.
-     * @param accepted A boolean indicating whether the dispute is accepted (true) or rejected (false).
-     */
-    function resolveDispute(uint256 id, bool accepted) external {
+    function resolveDispute(uint256 id, bool accepted) external nonReentrant {
+        if (msg.sender != governance) revert Unauthorized();
+
         Dispute storage d = disputes[id];
 
         if (d.status == DisputeStatus.None) revert InvalidDispute();
-        if (d.status != DisputeStatus.Open) revert AlreadyResolved();
 
-        if (!vault.canResolveDispute(msg.sender)) revert Unauthorized();
+        if (d.status != DisputeStatus.Open) revert AlreadyResolved();
 
         if (accepted) {
             d.status = DisputeStatus.ResolvedAccepted;
-            vault.close();
+            // Vault remains paused.
+            // Governance must close via proposal.
         } else {
             d.status = DisputeStatus.ResolvedRejected;
-            vault.unpause();
+            // Vault remains paused.
+            // Governance must unfreeze via proposal.
         }
 
         emit DisputeResolved(id, accepted);
