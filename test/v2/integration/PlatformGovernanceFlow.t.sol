@@ -7,6 +7,7 @@ import {PlatformV2} from "../../../src/contracts/v2/core/PlatformV2.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {GovernanceModule} from "../../../src/contracts/v2/modules/GovernanceModule.sol";
 import {DisputesModule} from "../../../src/contracts/v2/modules/DisputesModule.sol";
+import {MilestonesModule} from "../../../src/contracts/v2/modules/MilestonesModule.sol";
 import {IGovernanceModule} from "../../../src/interfaces/v2/IGovernanceModule.sol";
 import {IProjectVault} from "../../../src/interfaces/v2/IProjectVault.sol";
 
@@ -17,6 +18,7 @@ contract PlatformGovernanceFlowTest is Test {
     ProjectVault vaultImpl;
     GovernanceModule governanceImpl;
     DisputesModule disputesImpl;
+    MilestonesModule milestonesImpl;
 
     address voter1 = address(0x1);
     address voter2 = address(0x2);
@@ -25,11 +27,13 @@ contract PlatformGovernanceFlowTest is Test {
         vaultImpl = new ProjectVault();
         governanceImpl = new GovernanceModule();
         disputesImpl = new DisputesModule();
+        milestonesImpl = new MilestonesModule();
 
         platform = new PlatformV2(
             address(vaultImpl),
             address(governanceImpl),
-            address(disputesImpl)
+            address(disputesImpl),
+            address(milestonesImpl)
         );
     }
 
@@ -42,6 +46,7 @@ contract PlatformGovernanceFlowTest is Test {
             address vaultAddr,
             address governanceAddr,
             address disputesAddr,
+            ,
 
         ) = platform.projects(id);
 
@@ -58,13 +63,16 @@ contract PlatformGovernanceFlowTest is Test {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
 
-        (address vaultAddr, address governanceAddr, , ) = platform.projects(id);
+        (address vaultAddr, address governanceAddr, , , ) = platform.projects(
+            id
+        );
 
         IProjectVault vault = IProjectVault(vaultAddr);
         IGovernanceModule governance = IGovernanceModule(governanceAddr);
 
         uint256 proposalId = governance.propose(
-            IGovernanceModule.Action.ActivateVault
+            IGovernanceModule.Action.ActivateVault,
+            0
         );
 
         vm.prank(address(1));
@@ -88,6 +96,7 @@ contract PlatformGovernanceFlowTest is Test {
             address vaultAddr,
             address governanceAddr,
             address disputesAddr,
+            ,
 
         ) = platform.projects(id);
 
@@ -97,7 +106,8 @@ contract PlatformGovernanceFlowTest is Test {
 
         // Activar primero
         uint256 proposalId = governance.propose(
-            IGovernanceModule.Action.ActivateVault
+            IGovernanceModule.Action.ActivateVault,
+            0
         );
 
         vm.prank(address(1));
@@ -125,8 +135,8 @@ contract PlatformGovernanceFlowTest is Test {
         uint256 id1 = platform.createProject(address(p1));
         uint256 id2 = platform.createProject(address(p2));
 
-        (address v1, , , ) = platform.projects(id1);
-        (address v2, , , ) = platform.projects(id2);
+        (address v1, , , , ) = platform.projects(id1);
+        (address v2, , , , ) = platform.projects(id2);
 
         assertTrue(v1 != v2);
     }

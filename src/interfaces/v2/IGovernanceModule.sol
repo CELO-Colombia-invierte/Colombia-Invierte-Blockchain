@@ -10,7 +10,9 @@ interface IGovernanceModule {
         ActivateVault,
         CloseVault,
         FreezeVault,
-        UnfreezeVault
+        UnfreezeVault,
+        ApproveMilestone,
+        ExecuteMilestone
     }
 
     enum Vote {
@@ -25,6 +27,7 @@ interface IGovernanceModule {
 
     struct Proposal {
         Action action;
+        uint256 targetId; // For milestones
         uint256 startTime;
         uint256 yesVotes;
         uint256 noVotes;
@@ -43,9 +46,12 @@ interface IGovernanceModule {
                                 CORE
     //////////////////////////////////////////////////////////////*/
 
-    function initialize(address vault_) external;
+    function initialize(address vault_, address milestones_) external;
 
-    function propose(Action action) external returns (uint256);
+    function propose(
+        Action action,
+        uint256 targetId
+    ) external returns (uint256);
 
     function vote(uint256 proposalId, Vote vote) external;
 

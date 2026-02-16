@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IGovernanceModule} from "../../../interfaces/v2/IGovernanceModule.sol";
 import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
+import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
 
 contract GovernanceModule is Initializable, IGovernanceModule {
     uint256 public constant VOTING_PERIOD = 3 days;
@@ -17,6 +18,8 @@ contract GovernanceModule is Initializable, IGovernanceModule {
     address public override vault;
 
     uint256 public override proposalCount;
+
+    address public milestones;
 
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => Vote)) public votes;
@@ -40,9 +43,15 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                                 INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
-    function initialize(address vault_) external initializer {
-        if (vault_ == address(0)) revert ZeroAddress();
+    function initialize(
+        address vault_,
+        address milestones_
+    ) external initializer {
+        if (vault_ == address(0) || milestones_ == address(0))
+            revert ZeroAddress();
+
         vault = vault_;
+        milestones = milestones_;
 
         emit GovernanceInitialized(vault_);
     }
@@ -51,11 +60,15 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                             GOVERNANCE LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function propose(Action action) external returns (uint256 id) {
+    function propose(
+        Action action,
+        uint256 targetId
+    ) external returns (uint256 id) {
         id = ++proposalCount;
 
         proposals[id] = Proposal({
             action: action,
+            targetId: targetId,
             startTime: block.timestamp,
             yesVotes: 0,
             noVotes: 0,
@@ -101,7 +114,7 @@ contract GovernanceModule is Initializable, IGovernanceModule {
 
         p.executed = true;
 
-        _executeAction(p.action);
+        _executeAction(p.action, p.targetId);
 
         emit ProposalExecuted(id, p.action);
     }
@@ -110,7 +123,7 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                             INTERNAL EXECUTION
     //////////////////////////////////////////////////////////////*/
 
-    function _executeAction(Action action) internal {
+    function _executeAction(Action action, uint256 targetId) internal {
         IProjectVault v = IProjectVault(vault);
 
         if (action == Action.ActivateVault) {
@@ -121,6 +134,10 @@ contract GovernanceModule is Initializable, IGovernanceModule {
             v.pause();
         } else if (action == Action.UnfreezeVault) {
             v.unpause();
+        } else if (action == Action.ApproveMilestone) {
+            IMilestonesModule(milestones).approveMilestone(targetId);
+        } else if (action == Action.ExecuteMilestone) {
+            IMilestonesModule(milestones).executeMilestone(targetId);
         }
     }
 }

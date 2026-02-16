@@ -94,7 +94,7 @@ contract ProjectVault is
         project = project_;
         state = VaultState.Locked;
 
-        _grantRole(DEFAULT_ADMIN_ROLE, governance_);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(GOVERNANCE_ROLE, governance_);
         _grantRole(GUARDIAN_ROLE, guardian_);
         _grantRole(CONTROLLER_ROLE, project_);
@@ -109,7 +109,7 @@ contract ProjectVault is
     function setTokenAllowed(
         address token,
         bool allowed
-    ) external onlyRole(GOVERNANCE_ROLE) {
+    ) external onlyRole(GUARDIAN_ROLE) {
         isTokenAllowed[token] = allowed;
         emit TokenAllowed(token, allowed);
     }

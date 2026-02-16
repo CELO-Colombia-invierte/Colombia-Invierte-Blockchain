@@ -7,6 +7,7 @@ import {PlatformV2} from "../../../src/contracts/v2/core/PlatformV2.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {GovernanceModule} from "../../../src/contracts/v2/modules/GovernanceModule.sol";
 import {DisputesModule} from "../../../src/contracts/v2/modules/DisputesModule.sol";
+import {MilestonesModule} from "../../../src/contracts/v2/modules/MilestonesModule.sol";
 import {IProjectVault} from "../../../src/interfaces/v2/IProjectVault.sol";
 
 /// @dev Minimal mock to simulate tokenized project
@@ -19,18 +20,21 @@ contract PlatformV2Test is Test {
     ProjectVault vaultImpl;
     GovernanceModule governanceImpl;
     DisputesModule disputesImpl;
+    MilestonesModule milestonesImpl;
 
     function setUp() public {
         // Deploy implementations
         vaultImpl = new ProjectVault();
         governanceImpl = new GovernanceModule();
         disputesImpl = new DisputesModule();
+        milestonesImpl = new MilestonesModule();
 
         // Deploy platform
         platform = new PlatformV2(
             address(vaultImpl),
             address(governanceImpl),
-            address(disputesImpl)
+            address(disputesImpl),
+            address(milestonesImpl)
         );
     }
 
@@ -43,7 +47,8 @@ contract PlatformV2Test is Test {
             address vault,
             address governance,
             address disputes,
-            address creator
+            address creator,
+
         ) = platform.projects(id);
 
         assertTrue(vault != address(0));
@@ -57,7 +62,7 @@ contract PlatformV2Test is Test {
 
         uint256 projectId = platform.createProject(address(project));
 
-        (address vaultAddr, , address disputesAddr, ) = platform.projects(
+        (address vaultAddr, , address disputesAddr, , ) = platform.projects(
             projectId
         );
 
@@ -84,8 +89,8 @@ contract PlatformV2Test is Test {
         uint256 id1 = platform.createProject(address(project1));
         uint256 id2 = platform.createProject(address(project2));
 
-        (address vault1, , , ) = platform.projects(id1);
-        (address vault2, , , ) = platform.projects(id2);
+        (address vault1, , , , ) = platform.projects(id1);
+        (address vault2, , , , ) = platform.projects(id2);
 
         assertTrue(vault1 != vault2);
     }
