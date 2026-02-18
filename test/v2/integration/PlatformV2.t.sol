@@ -15,6 +15,10 @@ contract MockProject {
 
 }
 
+/**
+ * @title PlatformV2Test
+ * @notice Basic deployment and initialization tests for PlatformV2.
+ */
 contract PlatformV2Test is Test {
     PlatformV2 platform;
     ProjectVault vaultImpl;
@@ -38,6 +42,9 @@ contract PlatformV2Test is Test {
         );
     }
 
+    /**
+     * @notice Tests that project creation deploys all module contracts.
+     */
     function testCreateProjectDeploysModules() public {
         MockProject project = new MockProject();
 
@@ -57,6 +64,9 @@ contract PlatformV2Test is Test {
         assertEq(creator, address(this));
     }
 
+    /**
+     * @notice Verifies vault initializes with correct state and roles.
+     */
     function testVaultInitializedCorrectly() public {
         MockProject project = new MockProject();
 
@@ -82,6 +92,9 @@ contract PlatformV2Test is Test {
         assertTrue(hasRole);
     }
 
+    /**
+     * @notice Ensures multiple projects have independent contract instances.
+     */
     function testMultipleProjectsAreIndependent() public {
         MockProject project1 = new MockProject();
         MockProject project2 = new MockProject();

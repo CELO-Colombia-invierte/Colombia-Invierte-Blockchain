@@ -6,6 +6,11 @@ import {IGovernanceModule} from "../../../interfaces/v2/IGovernanceModule.sol";
 import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
 import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
 
+/**
+ * @title GovernanceModule
+ * @notice Manages project governance through proposals and voting.
+ * @dev Clonable via EIP-1167. Proposals can control vault state and milestone progression.
+ */
 contract GovernanceModule is Initializable, IGovernanceModule {
     uint256 public constant VOTING_PERIOD = 3 days;
     uint256 public constant QUORUM_PERCENT = 60;
@@ -43,6 +48,11 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                                 INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Initializes the governance module with vault and milestones addresses.
+     * @param vault_ Address of the associated ProjectVault
+     * @param milestones_ Address of the milestones module
+     */
     function initialize(
         address vault_,
         address milestones_
@@ -60,6 +70,12 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                             GOVERNANCE LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Creates a new proposal for a specific action.
+     * @param action Type of action to execute (vault control or milestone)
+     * @param targetId ID of the milestone target (ignored for vault actions)
+     * @return id Unique identifier for the created proposal
+     */
     function propose(
         Action action,
         uint256 targetId
@@ -78,6 +94,11 @@ contract GovernanceModule is Initializable, IGovernanceModule {
         emit ProposalCreated(id, action);
     }
 
+    /**
+     * @notice Casts a vote on an active proposal.
+     * @param id ID of the proposal to vote on
+     * @param vote_ Vote choice (Yes or No)
+     */
     function vote(uint256 id, Vote vote_) external {
         Proposal storage p = proposals[id];
 
@@ -98,6 +119,10 @@ contract GovernanceModule is Initializable, IGovernanceModule {
         emit VoteCast(id, msg.sender, vote_);
     }
 
+    /**
+     * @notice Executes a proposal after voting period ends and quorum is met.
+     * @param id ID of the proposal to execute
+     */
     function execute(uint256 id) external {
         Proposal storage p = proposals[id];
 
@@ -123,6 +148,9 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                             INTERNAL EXECUTION
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @dev Executes the approved action on the target contract.
+     */
     function _executeAction(Action action, uint256 targetId) internal {
         IProjectVault v = IProjectVault(vault);
 

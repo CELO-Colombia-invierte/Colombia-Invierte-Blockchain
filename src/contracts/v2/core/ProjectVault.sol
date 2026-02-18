@@ -8,9 +8,9 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
- * @title ProjectVault (V2)
- * @notice Single custody layer for V2 projects.
- * @dev Clonable via EIP-1167. Contains NO business logic.
+ * @title ProjectVault
+ * @notice Single custody layer for V2 projects. Holds funds and enforces state transitions.
+ * @dev Clonable via EIP-1167. Contains no business logic—only access control and fund safekeeping.
  */
 contract ProjectVault is
     Initializable,
@@ -76,6 +76,12 @@ contract ProjectVault is
                                 INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Initializes the vault with core contracts and roles.
+     * @param project_ Address of the main project contract
+     * @param governance_ Address that will manage state transitions
+     * @param guardian_ Address that can pause and manage token allowlist
+     */
     function initialize(
         address project_,
         address governance_,
@@ -106,6 +112,11 @@ contract ProjectVault is
                         TOKEN CONFIGURATION
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Adds or removes a token from the deposit allowlist.
+     * @param token Token address to configure
+     * @param allowed True to allow deposits, false to block
+     */
     function setTokenAllowed(
         address token,
         bool allowed
@@ -119,8 +130,8 @@ contract ProjectVault is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Deposits tokens on behalf of a user
-     * @dev Only callable by the project contract
+     * @notice Deposits tokens on behalf of a user.
+     * @dev Only callable by the project contract during Locked state.
      */
     function depositFrom(
         address from,
@@ -140,6 +151,10 @@ contract ProjectVault is
                         STATE TRANSITIONS
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Activates the vault, enabling fund releases.
+     * @dev Can only be called once from Locked state.
+     */
     function activate() external onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Locked) revert InvalidState();
 
@@ -147,6 +162,10 @@ contract ProjectVault is
         emit Activated();
     }
 
+    /**
+     * @notice Closes the vault, preventing further releases.
+     * @dev Can only be called from Active state.
+     */
     function close() external onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Active) revert InvalidState();
 
@@ -158,6 +177,10 @@ contract ProjectVault is
                             RELEASE
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Releases funds from the vault to a recipient.
+     * @dev Only callable by governance when vault is Active.
+     */
     function release(
         address token,
         address to,
@@ -178,10 +201,18 @@ contract ProjectVault is
                         EMERGENCY CONTROL
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Pauses all deposit and release operations.
+     * @dev Emergency function, callable only by guardian.
+     */
     function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
     }
 
+    /**
+     * @notice Resumes normal operations after a pause.
+     * @dev Callable only by governance.
+     */
     function unpause() external onlyRole(GOVERNANCE_ROLE) {
         _unpause();
     }

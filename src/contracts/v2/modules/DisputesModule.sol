@@ -6,9 +6,9 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
 
 /**
- * @title DisputesModule (V2)
- * @notice Handles dispute lifecycle and emergency freezing.
- * @dev Clonable via EIP-1167.
+ * @title DisputesModule
+ * @notice Handles dispute lifecycle and emergency freezing of the vault.
+ * @dev Clonable via EIP-1167. Opening a dispute automatically pauses the vault.
  */
 contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
     /*//////////////////////////////////////////////////////////////
@@ -49,7 +49,7 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
 
     IProjectVault public vault;
 
-    address public governance; // autoridad que puede resolver
+    address public governance; // Authority that can resolve disputes
 
     uint256 public disputeCount;
     mapping(uint256 => Dispute) public disputes;
@@ -69,6 +69,11 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
                                 INITIALIZER
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Initializes the disputes module with vault and governance addresses.
+     * @param vault_ Address of the associated ProjectVault
+     * @param governance_ Address authorized to resolve disputes
+     */
     function initialize(
         address vault_,
         address governance_
@@ -88,6 +93,11 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
                                 CORE LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Opens a new dispute and immediately pauses the vault.
+     * @param reason Human-readable justification for the dispute
+     * @return id Unique identifier for the created dispute
+     */
     function openDispute(
         string calldata reason
     ) external nonReentrant returns (uint256 id) {
@@ -103,30 +113,29 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
             status: DisputeStatus.Open
         });
 
-        // Freeze vault immediately
+        // Pause vault immediately to freeze all activity during dispute
         vault.pause();
 
         emit DisputeOpened(id, msg.sender);
     }
 
+    /**
+     * @notice Resolves an open dispute, setting its final status.
+     * @dev Vault remains paused after resolution—governance must unpause via proposal.
+     * @param id ID of the dispute to resolve
+     * @param accepted True if dispute is accepted, false if rejected
+     */
     function resolveDispute(uint256 id, bool accepted) external nonReentrant {
         if (msg.sender != governance) revert Unauthorized();
 
         Dispute storage d = disputes[id];
 
         if (d.status == DisputeStatus.None) revert InvalidDispute();
-
         if (d.status != DisputeStatus.Open) revert AlreadyResolved();
 
-        if (accepted) {
-            d.status = DisputeStatus.ResolvedAccepted;
-            // Vault remains paused.
-            // Governance must close via proposal.
-        } else {
-            d.status = DisputeStatus.ResolvedRejected;
-            // Vault remains paused.
-            // Governance must unfreeze via proposal.
-        }
+        d.status = accepted
+            ? DisputeStatus.ResolvedAccepted
+            : DisputeStatus.ResolvedRejected;
 
         emit DisputeResolved(id, accepted);
     }

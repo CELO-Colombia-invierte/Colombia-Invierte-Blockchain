@@ -13,6 +13,10 @@ import {IProjectVault} from "../../../src/interfaces/v2/IProjectVault.sol";
 
 contract MockProject {}
 
+/**
+ * @title PlatformGovernanceFlowTest
+ * @notice Integration tests for platform deployment and governance interactions.
+ */
 contract PlatformGovernanceFlowTest is Test {
     PlatformV2 platform;
     ProjectVault vaultImpl;
@@ -37,6 +41,9 @@ contract PlatformGovernanceFlowTest is Test {
         );
     }
 
+    /**
+     * @notice Verifies correct role assignments after project creation.
+     */
     function testVaultRolesAreCorrect() public {
         MockProject project = new MockProject();
 
@@ -59,6 +66,9 @@ contract PlatformGovernanceFlowTest is Test {
         assertTrue(vault.hasRole(vault.CONTROLLER_ROLE(), address(project)));
     }
 
+    /**
+     * @notice Tests full governance flow to activate a vault.
+     */
     function testGovernanceActivatesVault() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
@@ -88,6 +98,9 @@ contract PlatformGovernanceFlowTest is Test {
         assertEq(uint256(vault.state()), 1); // Active
     }
 
+    /**
+     * @notice Tests that opening a dispute pauses the vault.
+     */
     function testDisputeFreezesVault() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
@@ -104,7 +117,7 @@ contract PlatformGovernanceFlowTest is Test {
         IGovernanceModule governance = IGovernanceModule(governanceAddr);
         DisputesModule disputes = DisputesModule(disputesAddr);
 
-        // Activar primero
+        // Activate vault first
         uint256 proposalId = governance.propose(
             IGovernanceModule.Action.ActivateVault,
             0
@@ -121,13 +134,16 @@ contract PlatformGovernanceFlowTest is Test {
 
         assertEq(uint256(vault.state()), 1);
 
-        // Abrir disputa
+        // Open dispute
         disputes.openDispute("Fraud suspected");
 
         ProjectVault concreteVault = ProjectVault(vaultAddr);
         assertTrue(concreteVault.paused());
     }
 
+    /**
+     * @notice Ensures each project gets unique contract addresses.
+     */
     function testProjectsAreIsolated() public {
         MockProject p1 = new MockProject();
         MockProject p2 = new MockProject();

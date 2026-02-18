@@ -16,6 +16,10 @@ import {MockERC20} from "../../../src/contracts/mocks/shared/MockERC20.sol";
 
 contract MockProject {}
 
+/**
+ * @title GovernanceMilestoneFlowTest
+ * @notice Integration tests for governance-controlled milestone flow.
+ */
 contract GovernanceMilestoneFlowTest is Test {
     PlatformV2 platform;
 
@@ -76,6 +80,9 @@ contract GovernanceMilestoneFlowTest is Test {
                         1️⃣ HAPPY PATH
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Tests successful milestone flow: propose, approve, execute.
+     */
     function testMilestoneThroughGovernanceFlow() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
@@ -139,6 +146,9 @@ contract GovernanceMilestoneFlowTest is Test {
                 2️⃣ CANNOT EXECUTE BEFORE APPROVAL
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Tests that execution fails if milestone is not approved.
+     */
     function testCannotExecuteMilestoneWithoutApproval() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
@@ -189,6 +199,9 @@ contract GovernanceMilestoneFlowTest is Test {
                 3️⃣ CANNOT EXECUTE BEFORE VOTING ENDS
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Tests that execution fails if voting period is still active.
+     */
     function testCannotExecuteBeforeVotingPeriodEnds() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));
@@ -212,6 +225,9 @@ contract GovernanceMilestoneFlowTest is Test {
                 4️⃣ CANNOT EXECUTE TWICE
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Tests that a proposal cannot be executed more than once.
+     */
     function testCannotExecuteTwice() public {
         MockProject project = new MockProject();
         uint256 id = platform.createProject(address(project));

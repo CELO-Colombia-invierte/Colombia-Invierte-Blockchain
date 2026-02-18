@@ -6,6 +6,10 @@ import {MilestonesModule} from "../../../src/contracts/v2/modules/MilestonesModu
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {MockERC20} from "../../../src/contracts/mocks/shared/MockERC20.sol";
 
+/**
+ * @title MilestonesModuleTest
+ * @notice Unit tests for MilestonesModule milestone lifecycle.
+ */
 contract MilestonesModuleTest is Test {
     MilestonesModule milestones;
     ProjectVault vault;
@@ -27,6 +31,9 @@ contract MilestonesModuleTest is Test {
         vault.setTokenAllowed(address(token), true);
     }
 
+    /**
+     * @notice Tests full milestone flow: propose, approve, execute.
+     */
     function testProposeApproveExecute() public {
         bool success = token.transfer(address(vault), 100 ether);
         require(success);

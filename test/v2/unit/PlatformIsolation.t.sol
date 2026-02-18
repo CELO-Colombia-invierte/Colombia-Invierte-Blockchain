@@ -12,6 +12,10 @@ import {IProjectVault} from "../../../src/interfaces/v2/IProjectVault.sol";
 
 contract MockProject {}
 
+/**
+ * @title PlatformIsolationTest
+ * @notice Tests that projects are fully isolated from each other.
+ */
 contract PlatformIsolationTest is Test {
     PlatformV2 platform;
     ProjectVault vaultImpl;
@@ -33,6 +37,9 @@ contract PlatformIsolationTest is Test {
         );
     }
 
+    /**
+     * @notice Verifies that governance actions on one project don't affect others.
+     */
     function testProjectsAreFullyIsolated() public {
         MockProject p1 = new MockProject();
         MockProject p2 = new MockProject();

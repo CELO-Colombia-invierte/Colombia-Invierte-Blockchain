@@ -8,6 +8,11 @@ import {IGovernanceModule} from "../../../interfaces/v2/IGovernanceModule.sol";
 import {IDisputesModule} from "../../../interfaces/v2/IDisputesModule.sol";
 import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
 
+/**
+ * @title PlatformV2
+ * @notice Factory contract for deploying minimal proxy clones of all project components (vault, governance, disputes, milestones).
+ * @dev Manages project creation and tracks deployed contract addresses per project ID.
+ */
 contract PlatformV2 {
     using Clones for address;
 
@@ -18,9 +23,32 @@ contract PlatformV2 {
     error ZeroAddress();
 
     /*//////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Emitted when a new project is created.
+     * @param projectId Unique identifier for the project
+     * @param vault Address of the deployed ProjectVault contract
+     * @param governance Address of the deployed governance module
+     * @param disputes Address of the deployed disputes module
+     * @param creator Address of the project creator (msg.sender)
+     * @param milestones Address of the deployed milestones module
+     */
+    event ProjectDeployed(
+        uint256 indexed projectId,
+        address vault,
+        address governance,
+        address disputes,
+        address creator,
+        address milestones
+    );
+
+    /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Implementation contract addresses for minimal clones.
     address public immutable VAULT_IMPLEMENTATION;
     address public immutable GOVERNANCE_IMPLEMENTATION;
     address public immutable DISPUTES_IMPLEMENTATION;
@@ -39,22 +67,16 @@ contract PlatformV2 {
     mapping(uint256 => ProjectContracts) public projects;
 
     /*//////////////////////////////////////////////////////////////
-                                EVENTS
-    //////////////////////////////////////////////////////////////*/
-
-    event ProjectDeployed(
-        uint256 indexed projectId,
-        address vault,
-        address governance,
-        address disputes,
-        address creator,
-        address milestones
-    );
-
-    /*//////////////////////////////////////////////////////////////
                                 CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Sets the implementation contracts for all project components.
+     * @param vaultImpl Address of the ProjectVault implementation
+     * @param governanceImpl Address of the governance module implementation
+     * @param disputesImpl Address of the disputes module implementation
+     * @param milestonesImpl Address of the milestones module implementation
+     */
     constructor(
         address vaultImpl,
         address governanceImpl,
@@ -78,6 +100,11 @@ contract PlatformV2 {
                             PROJECT CREATION
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Deploys a full set of project contracts using minimal clones.
+     * @param projectToken Address of the token used for project funding
+     * @return projectId The unique ID of the newly created project
+     */
     function createProject(
         address projectToken
     ) external returns (uint256 projectId) {
@@ -95,6 +122,8 @@ contract PlatformV2 {
         IDisputesModule(disputes).initialize(vault, governance);
         IMilestonesModule(milestones).initialize(vault, governance);
 
+        // Grant the milestones module the GOVERNANCE_ROLE on the vault.
+        // This allows the milestones module to mint/burn tokens when milestones are completed.
         ProjectVault(vault).grantRole(
             ProjectVault(vault).GOVERNANCE_ROLE(),
             milestones

@@ -5,6 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {DisputesModule} from "../../../src/contracts/v2/modules/DisputesModule.sol";
 
+/**
+ * @title DisputesModuleTest
+ * @notice Unit tests for DisputesModule functionality.
+ */
 contract DisputesModuleTest is Test {
     ProjectVault vault;
     DisputesModule disputes;
@@ -27,12 +31,18 @@ contract DisputesModuleTest is Test {
         vault.grantRole(vault.GUARDIAN_ROLE(), address(disputes));
     }
 
+    /**
+     * @notice Tests that opening a dispute pauses the vault.
+     */
     function testOpenDisputeFreezesVault() public {
         disputes.openDispute("issue");
 
         assertTrue(vault.paused());
     }
 
+    /**
+     * @notice Tests that resolving a dispute as accepted leaves vault paused.
+     */
     function testResolveAcceptedClosesVault() public {
         uint256 id = disputes.openDispute("issue");
 
@@ -41,6 +51,9 @@ contract DisputesModuleTest is Test {
         assertTrue(vault.paused());
     }
 
+    /**
+     * @notice Tests that resolving a dispute as rejected leaves vault paused.
+     */
     function testResolveRejectedUnpausesVault() public {
         uint256 id = disputes.openDispute("issue");
 

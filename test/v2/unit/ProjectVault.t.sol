@@ -4,6 +4,10 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 
+/**
+ * @title ProjectVaultTest
+ * @notice Unit tests for ProjectVault initialization and state transitions.
+ */
 contract ProjectVaultTest is Test {
     ProjectVault vault;
 
@@ -16,6 +20,9 @@ contract ProjectVaultTest is Test {
         vault.initialize(project, governance, guardian);
     }
 
+    /**
+     * @notice Tests that initialize correctly sets state and roles.
+     */
     function testInitializeSetsStateAndRoles() public view {
         assertEq(uint256(vault.state()), 0);
         assertEq(vault.project(), project);
@@ -25,11 +32,17 @@ contract ProjectVaultTest is Test {
         assertTrue(vault.hasRole(vault.CONTROLLER_ROLE(), project));
     }
 
+    /**
+     * @notice Tests that initialize cannot be called twice.
+     */
     function testInitializeCannotBeCalledTwice() public {
         vm.expectRevert();
         vault.initialize(project, governance, guardian);
     }
 
+    /**
+     * @notice Tests that only governance can activate the vault.
+     */
     function testActivateOnlyGovernance() public {
         vm.prank(governance);
         vault.activate();
@@ -37,6 +50,9 @@ contract ProjectVaultTest is Test {
         assertEq(uint256(vault.state()), 1);
     }
 
+    /**
+     * @notice Tests that only governance can close the vault.
+     */
     function testCloseOnlyGovernance() public {
         vm.prank(governance);
         vault.activate();
@@ -47,6 +63,9 @@ contract ProjectVaultTest is Test {
         assertEq(uint256(vault.state()), 2);
     }
 
+    /**
+     * @notice Tests that release reverts if vault is not active.
+     */
     function testReleaseRevertsIfNotActive() public {
         vm.prank(governance);
         vm.expectRevert();

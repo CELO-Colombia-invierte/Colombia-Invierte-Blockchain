@@ -7,6 +7,10 @@ import {IGovernanceModule} from "../../../src/interfaces/v2/IGovernanceModule.so
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {MilestonesModule} from "../../../src/contracts/v2/modules/MilestonesModule.sol";
 
+/**
+ * @title GovernanceModuleTest
+ * @notice Unit tests for GovernanceModule proposal and voting mechanics.
+ */
 contract GovernanceModuleTest is Test {
     GovernanceModule gov;
     ProjectVault vault;
@@ -23,15 +27,24 @@ contract GovernanceModuleTest is Test {
         gov.initialize(address(vault), address(milestones));
     }
 
+    /**
+     * @notice Tests that initialize correctly sets the vault address.
+     */
     function testInitializeSetsVault() public view {
         assertEq(gov.vault(), address(vault));
     }
 
+    /**
+     * @notice Tests that initialize cannot be called twice.
+     */
     function testCannotInitializeTwice() public {
         vm.expectRevert();
         gov.initialize(address(vault), address(milestones));
     }
 
+    /**
+     * @notice Tests full proposal lifecycle: propose, vote, execute.
+     */
     function testProposalLifecycle() public {
         uint256 id = gov.propose(IGovernanceModule.Action.ActivateVault, 0);
 
