@@ -80,6 +80,14 @@ interface IProjectVault {
     function release(address token, address to, uint256 amount) external;
 
     /**
+     * @notice Releases funds from the vault to a recipient.
+     * @param token Token address to release
+     * @param to Recipient address
+     * @param amount Amount to release
+     */
+    function releaseOnClose(address token, address to, uint256 amount) external;
+
+    /**
      * @notice Closes the vault, preventing further releases.
      */
     function close() external;

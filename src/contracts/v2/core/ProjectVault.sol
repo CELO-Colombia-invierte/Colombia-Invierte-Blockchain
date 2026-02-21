@@ -197,6 +197,26 @@ contract ProjectVault is
         emit Released(token, to, amount);
     }
 
+    /**
+     * @notice Releases funds from the vault to a recipient.
+     * @dev Only callable by controller when vault is Closed.
+     */
+    function releaseOnClose(
+        address token,
+        address to,
+        uint256 amount
+    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+        if (state != VaultState.Closed) revert InvalidState();
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (amount > balance) revert InsufficientBalance();
+
+        IERC20(token).safeTransfer(to, amount);
+
+        emit Released(token, to, amount);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         EMERGENCY CONTROL
     //////////////////////////////////////////////////////////////*/
