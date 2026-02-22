@@ -7,15 +7,19 @@ import {NatilleraV2} from "../../../src/contracts/v2/natillera/NatilleraV2.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
 import {MockERC20} from "../../../src/contracts/mocks/shared/MockERC20.sol";
 import {INatilleraV2} from "../../../src/interfaces/v2/INatilleraV2.sol";
+import {FeeManager} from "../../../src/contracts/v2/fees/FeeManager.sol";
 
 /**
  * @title NatilleraInvariantsTest
- * @notice Invariant tests for NatilleraV2 to ensure mathematical correctness.
+ * @notice Invariant tests for NatilleraV2 with fee integration.
  */
 contract NatilleraInvariantsTest is Test {
     NatilleraV2 natillera;
     ProjectVault vault;
+    FeeManager feeManager;
     MockERC20 token;
+
+    address treasury = address(999);
 
     address[] internal members;
 
@@ -27,24 +31,27 @@ contract NatilleraInvariantsTest is Test {
 
         natillera = new NatilleraV2();
         vault = new ProjectVault();
+        feeManager = new FeeManager();
+
+        feeManager.initialize(treasury);
 
         vault.initialize(address(natillera), address(this), address(this));
-
         vault.setTokenAllowed(address(token), true);
 
         natillera.initialize(
             address(vault),
+            address(feeManager),
             address(token),
             QUOTA,
             DURATION,
             block.timestamp
         );
 
-        // Create 5 deterministic members
         for (uint256 i = 0; i < 5; i++) {
             address member = makeAddr(
                 string(abi.encodePacked("member", vm.toString(i)))
             );
+
             members.push(member);
 
             token.mint(member, QUOTA);
@@ -56,7 +63,6 @@ contract NatilleraInvariantsTest is Test {
             vm.stopPrank();
         }
 
-        // Mature the system
         vm.warp(block.timestamp + 400 days);
 
         vault.activate();
@@ -64,14 +70,13 @@ contract NatilleraInvariantsTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INVARIANT 1
-    totalClaimed never exceeds finalPool
+        INVARIANT 1 — totalClaimed == finalPool
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Verifies that total claimed never exceeds final pool balance.
+     * @notice Verifies total claimed equals final pool after all claims.
      */
-    function testInvariant_TotalClaimedNeverExceedsFinalPool() public {
+    function testInvariant_TotalClaimedEqualsFinalPool() public {
         uint256 vaultBefore = token.balanceOf(address(vault));
 
         for (uint256 i = 0; i < members.length; i++) {
@@ -79,50 +84,47 @@ contract NatilleraInvariantsTest is Test {
             natillera.claimFinal();
         }
 
-        uint256 finalPool = natillera.finalPool();
-        uint256 totalClaimed = natillera.totalClaimed();
-
-        assertLe(totalClaimed, finalPool);
-        assertEq(totalClaimed, vaultBefore);
+        assertEq(natillera.totalClaimed(), vaultBefore);
+        assertEq(natillera.totalClaimed(), natillera.finalPool());
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INVARIANT 2
-    Sum of final balances equals initial vault balance
+        INVARIANT 2 — Conservation including treasury
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Verifies that no value is created or lost during distribution.
+     * @notice Verifies total value is preserved (users + treasury = initial vault).
      */
     function testInvariant_NoValueCreationOrLoss() public {
         uint256 vaultBefore = token.balanceOf(address(vault));
 
-        uint256 totalReceived;
+        uint256 usersTotal;
 
         for (uint256 i = 0; i < members.length; i++) {
             address member = members[i];
 
-            uint256 before = token.balanceOf(member);
+            uint256 beforeBal = token.balanceOf(member);
 
             vm.prank(member);
             natillera.claimFinal();
 
             uint256 afterBal = token.balanceOf(member);
 
-            totalReceived += (afterBal - before);
+            usersTotal += (afterBal - beforeBal);
         }
 
-        assertEq(totalReceived, vaultBefore);
+        uint256 treasuryBalance = token.balanceOf(treasury);
+
+        assertEq(usersTotal + treasuryBalance, vaultBefore);
         assertEq(token.balanceOf(address(vault)), 0);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INVARIANT 3
-    Cannot claim twice
+        INVARIANT 3 — No double claim
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Tests that double claims are prevented.
+     * @notice Tests that a user cannot claim twice.
      */
     function testInvariant_CannotClaimTwice() public {
         address member = members[0];
@@ -136,8 +138,7 @@ contract NatilleraInvariantsTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                        INVARIANT 4
-    Random claim order doesn't break math
+        INVARIANT 4 — Claim order independent
     //////////////////////////////////////////////////////////////*/
 
     /**
@@ -146,7 +147,6 @@ contract NatilleraInvariantsTest is Test {
     function testInvariant_RandomClaimOrder() public {
         uint256 vaultBefore = token.balanceOf(address(vault));
 
-        // Reverse order
         for (uint256 i = members.length; i > 0; i--) {
             vm.prank(members[i - 1]);
             natillera.claimFinal();

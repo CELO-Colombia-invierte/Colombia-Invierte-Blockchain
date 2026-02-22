@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {NatilleraV2} from "../../../src/contracts/v2/natillera/NatilleraV2.sol";
+import {FeeManager} from "../../../src/contracts/v2/fees/FeeManager.sol";
 import {MockERC20} from "../../../src/contracts/mocks/shared/MockERC20.sol";
 
 interface IProjectVaultMinimal {
@@ -55,11 +56,12 @@ contract MockVault is IProjectVaultMinimal {
 
 /**
  * @title NatilleraV2Test
- * @notice Fuzz and invariant tests for NatilleraV2.
+ * @notice Fuzz and invariant tests for NatilleraV2 with fee integration.
  */
 contract NatilleraV2Test is Test {
     NatilleraV2 internal natillera;
     MockVault internal vault;
+    FeeManager internal feeManager;
     MockERC20 internal token;
 
     address internal alice = address(0x1);
@@ -72,10 +74,14 @@ contract NatilleraV2Test is Test {
     function setUp() public {
         token = new MockERC20("Mock", "MOCK");
         vault = new MockVault(address(token));
+        feeManager = new FeeManager();
+
+        feeManager.initialize(address(999)); // treasury mock
 
         natillera = new NatilleraV2();
         natillera.initialize(
             address(vault),
+            address(feeManager),
             address(token),
             QUOTA,
             DURATION,
@@ -137,7 +143,11 @@ contract NatilleraV2Test is Test {
 
         assertEq(vaultAfter, 0);
 
-        assertEq(token.balanceOf(alice) + token.balanceOf(bob), vaultBefore);
+        uint256 usersTotal = token.balanceOf(alice) + token.balanceOf(bob);
+
+        uint256 treasuryBalance = token.balanceOf(feeManager.feeTreasury());
+
+        assertEq(usersTotal + treasuryBalance, vaultBefore);
     }
 
     // =============================================================
@@ -271,7 +281,9 @@ contract NatilleraV2Test is Test {
             token.balanceOf(bob) +
             token.balanceOf(carol);
 
-        assertEq(distributed, vaultBefore);
+        uint256 treasuryBalance = token.balanceOf(feeManager.feeTreasury());
+
+        assertEq(distributed + treasuryBalance, vaultBefore);
     }
 
     // =============================================================

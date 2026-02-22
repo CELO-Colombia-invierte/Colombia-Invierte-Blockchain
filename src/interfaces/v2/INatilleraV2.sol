@@ -31,6 +31,7 @@ interface INatilleraV2 {
      */
     function initialize(
         address vault_,
+        address feeManager_,
         address depositToken_,
         uint256 quota_,
         uint256 duration_,

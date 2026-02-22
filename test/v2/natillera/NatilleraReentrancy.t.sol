@@ -5,11 +5,17 @@ import {Test} from "forge-std/Test.sol";
 
 import {NatilleraV2} from "../../../src/contracts/v2/natillera/NatilleraV2.sol";
 import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
+import {FeeManager} from "../../../src/contracts/v2/fees/FeeManager.sol";
 import {MockERC20} from "../../../src/contracts/mocks/shared/MockERC20.sol";
 
+/**
+ * @title NatilleraReentrancyTest
+ * @notice Tests reentrancy protection in NatilleraV2 with fee integration.
+ */
 contract NatilleraReentrancyTest is Test {
     NatilleraV2 natillera;
     ProjectVault vault;
+    FeeManager feeManager;
     MockERC20 token;
 
     uint256 constant QUOTA = 100e18;
@@ -22,6 +28,9 @@ contract NatilleraReentrancyTest is Test {
 
         natillera = new NatilleraV2();
         vault = new ProjectVault();
+        feeManager = new FeeManager();
+
+        feeManager.initialize(address(999)); // treasury mock
 
         vault.initialize(address(natillera), address(this), address(this));
 
@@ -29,6 +38,7 @@ contract NatilleraReentrancyTest is Test {
 
         natillera.initialize(
             address(vault),
+            address(feeManager),
             address(token),
             QUOTA,
             DURATION,
@@ -57,6 +67,9 @@ contract NatilleraReentrancyTest is Test {
                         REENTRANCY TEST
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Verifies that reentrancy attack on claimFinal is prevented.
+     */
     function test_ReentrancyAttackFails() public {
         uint256 vaultBefore = token.balanceOf(address(vault));
 
@@ -64,13 +77,19 @@ contract NatilleraReentrancyTest is Test {
 
         uint256 vaultAfter = token.balanceOf(address(vault));
 
-        // Vault debe quedar vacío
+        // Vault should be empty
         assertEq(vaultAfter, 0);
 
-        // Attacker solo recibió una cuota proporcional
-        assertEq(token.balanceOf(address(attacker)), vaultBefore);
+        // Attacker only received proportional share (after 3% fee)
+        uint256 expectedNet = (vaultBefore * 9700) / 10000;
 
-        // totalClaimed == finalPool
+        assertEq(token.balanceOf(address(attacker)), expectedNet);
+        assertEq(
+            token.balanceOf(feeManager.feeTreasury()),
+            vaultBefore - expectedNet
+        );
+
+        // totalClaimed equals finalPool
         assertEq(natillera.totalClaimed(), natillera.finalPool());
     }
 }
@@ -79,6 +98,10 @@ contract NatilleraReentrancyTest is Test {
                         ATTACK CONTRACT
 //////////////////////////////////////////////////////////////*/
 
+/**
+ * @title Attacker
+ * @notice Malicious contract attempting reentrancy during claimFinal.
+ */
 contract Attacker {
     NatilleraV2 public natillera;
     bool internal attempted;
@@ -91,16 +114,16 @@ contract Attacker {
         natillera.claimFinal();
     }
 
-    // Este receive se ejecuta cuando recibe tokens del vault
+    // This receive is triggered when receiving tokens from vault
     receive() external payable {
-        // Intentamos reentrar una sola vez
+        // Attempt reentrancy only once
         if (!attempted) {
             attempted = true;
 
             try natillera.claimFinal() {
                 revert("Reentrancy succeeded - should fail");
             } catch {
-                // Esperado: debe fallar
+                // Expected: should fail
             }
         }
     }
