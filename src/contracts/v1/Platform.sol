@@ -5,14 +5,15 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
-import {INatillera} from "../interfaces/INatillera.sol";
-import {ITokenizacion} from "../interfaces/ITokenizacion.sol";
+import {INatillera} from "../../interfaces/v1/INatillera.sol";
+import {ITokenizacion} from "../../interfaces/v1/ITokenizacion.sol";
 
 /**
- * @title Platform
- * @notice Factory for deploying Natillera and Tokenizacion projects
- * @dev MVP V1: Simple factory with fixed fee, no token registry, no user management
+ * @title Platform (V1)
+ * @notice Factory for deploying V1 and V2 projects
+ * @dev Platform logic is V1. V2 refers only to deployed project implementations.
  */
+
 contract Platform is Ownable, ReentrancyGuard {
     using Clones for address;
 
@@ -35,6 +36,12 @@ contract Platform is Ownable, ReentrancyGuard {
 
     /// @notice Tokenizacion implementation contract address
     address public tokenizacionImplementation;
+
+    /// @notice Natillera V2 implementation contract address
+    address public natilleraV2Implementation;
+
+    /// @notice Tokenizacion V2 implementation contract address
+    address public tokenizacionV2Implementation;
 
     /// @notice Mapping from project ID to deployed contract address
     mapping(uint256 => address) public getProjectById;
@@ -232,6 +239,14 @@ contract Platform is Ownable, ReentrancyGuard {
         return clone;
     }
 
+    function deployNatilleraV2() external returns (/* params */ address) {
+        // clone natilleraV2Implementation
+    }
+
+    function deployTokenizacionV2() external returns (/* params */ address) {
+        // clone tokenizacionV2Implementation
+    }
+
     /*///////////////////////////////////////////////////////////////
                             ADMIN FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -286,6 +301,35 @@ contract Platform is Ownable, ReentrancyGuard {
         }
 
         emit ImplementationUpdated(contractType, implementation);
+    }
+
+    /**
+     * @notice Update Natillera V2 implementation contract address
+     * @param implementation New Natillera V2 implementation contract address
+     * @dev Can only be called by contract owner
+     * @dev Implementation address must be non-zero
+     */
+
+    function updateNatilleraV2Implementation(
+        address implementation
+    ) external onlyOwner {
+        if (implementation == address(0)) revert InvalidImplementation();
+        natilleraV2Implementation = implementation;
+        emit ImplementationUpdated("NATILLERA_V2", implementation);
+    }
+
+    /**
+     * @notice Update Tokenizacion V2 implementation contract address
+     * @param implementation New Tokenizacion V2 implementation contract address
+     * @dev Can only be called by contract owner
+     * @dev Implementation address must be non-zero
+     */
+    function updateTokenizacionV2Implementation(
+        address implementation
+    ) external onlyOwner {
+        if (implementation == address(0)) revert InvalidImplementation();
+        tokenizacionV2Implementation = implementation;
+        emit ImplementationUpdated("TOKENIZACION_V2", implementation);
     }
 
     /*///////////////////////////////////////////////////////////////
