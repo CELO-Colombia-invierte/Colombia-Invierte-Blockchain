@@ -14,7 +14,9 @@ test = "test"
 solc = '0.8.30'
 evm_version = 'prague'
 libs = ["node_modules", "lib"]
-optimizer_runs = 10_000
+optimizer_runs = 1_000
+optimizer = true
+via_ir = true
 
 [profile.optimized]
 via_ir = true

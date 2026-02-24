@@ -10,6 +10,7 @@ import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
  * @title GovernanceModule
  * @notice Manages project governance through proposals and voting.
  * @dev Clonable via EIP-1167. Proposals can control vault state and milestone progression.
+ * @author Key Lab Technical Team.
  */
 contract GovernanceModule is Initializable, IGovernanceModule {
     uint256 public constant VOTING_PERIOD = 3 days;
@@ -19,11 +20,8 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Vault address (stored as address to avoid override mismatch)
     address public override vault;
-
     uint256 public override proposalCount;
-
     address public milestones;
 
     mapping(uint256 => Proposal) public proposals;
@@ -50,15 +48,12 @@ contract GovernanceModule is Initializable, IGovernanceModule {
 
     /**
      * @notice Initializes the governance module with vault and milestones addresses.
-     * @param vault_ Address of the associated ProjectVault
-     * @param milestones_ Address of the milestones module
      */
     function initialize(
         address vault_,
         address milestones_
     ) external initializer {
-        if (vault_ == address(0) || milestones_ == address(0))
-            revert ZeroAddress();
+        if (vault_ == address(0)) revert ZeroAddress();
 
         vault = vault_;
         milestones = milestones_;
@@ -72,16 +67,13 @@ contract GovernanceModule is Initializable, IGovernanceModule {
 
     /**
      * @notice Creates a new proposal for a specific action.
-     * @param action Type of action to execute (vault control or milestone)
      * @param targetId ID of the milestone target (ignored for vault actions)
-     * @return id Unique identifier for the created proposal
      */
     function propose(
         Action action,
         uint256 targetId
     ) external returns (uint256 id) {
         id = ++proposalCount;
-
         proposals[id] = Proposal({
             action: action,
             targetId: targetId,
@@ -90,14 +82,11 @@ contract GovernanceModule is Initializable, IGovernanceModule {
             noVotes: 0,
             executed: false
         });
-
         emit ProposalCreated(id, action);
     }
 
     /**
      * @notice Casts a vote on an active proposal.
-     * @param id ID of the proposal to vote on
-     * @param vote_ Vote choice (Yes or No)
      */
     function vote(uint256 id, Vote vote_) external {
         Proposal storage p = proposals[id];
@@ -109,19 +98,15 @@ contract GovernanceModule is Initializable, IGovernanceModule {
         if (vote_ == Vote.None) revert InvalidVote();
 
         votes[id][msg.sender] = vote_;
-
-        if (vote_ == Vote.Yes) {
-            p.yesVotes++;
-        } else {
-            p.noVotes++;
-        }
+        if (vote_ == Vote.Yes) p.yesVotes++;
+        else p.noVotes++;
 
         emit VoteCast(id, msg.sender, vote_);
     }
 
     /**
      * @notice Executes a proposal after voting period ends and quorum is met.
-     * @param id ID of the proposal to execute
+     * @dev Requires >60% yes votes from total votes cast.
      */
     function execute(uint256 id) external {
         Proposal storage p = proposals[id];
@@ -138,9 +123,7 @@ contract GovernanceModule is Initializable, IGovernanceModule {
         if (yesPercent < QUORUM_PERCENT) revert QuorumNotReached();
 
         p.executed = true;
-
         _executeAction(p.action, p.targetId);
-
         emit ProposalExecuted(id, p.action);
     }
 
@@ -148,9 +131,6 @@ contract GovernanceModule is Initializable, IGovernanceModule {
                             INTERNAL EXECUTION
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @dev Executes the approved action on the target contract.
-     */
     function _executeAction(Action action, uint256 targetId) internal {
         IProjectVault v = IProjectVault(vault);
 

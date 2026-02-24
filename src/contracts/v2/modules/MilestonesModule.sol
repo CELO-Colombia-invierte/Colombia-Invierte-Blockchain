@@ -10,6 +10,7 @@ import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
  * @title MilestonesModule
  * @notice Manages the lifecycle of project milestones from proposal to execution.
  * @dev Clonable via EIP-1167. Only governance can propose, approve, and execute milestones.
+ * @author Key Lab Technical Team.
  */
 contract MilestonesModule is
     Initializable,
@@ -24,7 +25,6 @@ contract MilestonesModule is
 
     IProjectVault public vault;
     address public governance;
-
     uint256 public override milestoneCount;
     mapping(uint256 => Milestone) public override milestones;
 
@@ -34,8 +34,6 @@ contract MilestonesModule is
 
     /**
      * @notice Initializes the milestones module with vault and governance addresses.
-     * @param vault_ Address of the associated ProjectVault
-     * @param governance_ Address authorized to manage milestones
      */
     function initialize(
         address vault_,
@@ -67,11 +65,6 @@ contract MilestonesModule is
 
     /**
      * @notice Creates a new milestone proposal.
-     * @param description Human-readable description of the milestone
-     * @param token Address of the token to be released
-     * @param recipient Address that will receive funds upon execution
-     * @param amount Amount of tokens to release
-     * @return id Unique identifier for the created milestone
      */
     function proposeMilestone(
         string calldata description,
@@ -84,7 +77,6 @@ contract MilestonesModule is
         if (amount == 0) revert ZeroAmount();
 
         id = ++milestoneCount;
-
         milestones[id] = Milestone({
             description: description,
             token: token,
@@ -92,39 +84,31 @@ contract MilestonesModule is
             amount: amount,
             status: MilestoneStatus.Proposed
         });
-
         emit MilestoneProposed(id);
     }
 
     /**
      * @notice Approves a proposed milestone, making it eligible for execution.
-     * @param id ID of the milestone to approve
      */
     function approveMilestone(uint256 id) external override onlyGovernance {
         Milestone storage m = milestones[id];
-
         if (m.status != MilestoneStatus.Proposed) revert InvalidState();
-
         m.status = MilestoneStatus.Approved;
-
         emit MilestoneApproved(id);
     }
 
     /**
      * @notice Executes an approved milestone, releasing funds from the vault.
-     * @param id ID of the milestone to execute
+     * @dev Reverts if vault release fails (e.g., insufficient balance, wrong state).
      */
     function executeMilestone(
         uint256 id
     ) external override onlyGovernance nonReentrant {
         Milestone storage m = milestones[id];
-
         if (m.status != MilestoneStatus.Approved) revert InvalidState();
 
         vault.release(m.token, m.recipient, m.amount);
-
         m.status = MilestoneStatus.Executed;
-
         emit MilestoneExecuted(id);
     }
 

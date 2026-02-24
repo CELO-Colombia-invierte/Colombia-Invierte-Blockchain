@@ -9,6 +9,7 @@ import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
  * @title DisputesModule
  * @notice Handles dispute lifecycle and emergency freezing of the vault.
  * @dev Clonable via EIP-1167. Opening a dispute automatically pauses the vault.
+ * @author Key Lab Technical Team.
  */
 contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
     /*//////////////////////////////////////////////////////////////
@@ -48,9 +49,7 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
     //////////////////////////////////////////////////////////////*/
 
     IProjectVault public vault;
-
-    address public governance; // Authority that can resolve disputes
-
+    address public governance;
     uint256 public disputeCount;
     mapping(uint256 => Dispute) public disputes;
 
@@ -71,8 +70,6 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
 
     /**
      * @notice Initializes the disputes module with vault and governance addresses.
-     * @param vault_ Address of the associated ProjectVault
-     * @param governance_ Address authorized to resolve disputes
      */
     function initialize(
         address vault_,
@@ -95,17 +92,16 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
 
     /**
      * @notice Opens a new dispute and immediately pauses the vault.
-     * @param reason Human-readable justification for the dispute
-     * @return id Unique identifier for the created dispute
+     * @dev Vault must be Active. Pauses vault to freeze activity during review.
      */
     function openDispute(
         string calldata reason
     ) external nonReentrant returns (uint256 id) {
+        if (msg.sender != governance) revert Unauthorized();
         if (vault.state() != IProjectVault.VaultState.Active)
             revert NotActiveVault();
 
         id = ++disputeCount;
-
         disputes[id] = Dispute({
             opener: msg.sender,
             reason: reason,
@@ -113,30 +109,24 @@ contract DisputesModule is Initializable, ReentrancyGuardUpgradeable {
             status: DisputeStatus.Open
         });
 
-        // Pause vault immediately to freeze all activity during dispute
         vault.pause();
-
         emit DisputeOpened(id, msg.sender);
     }
 
     /**
      * @notice Resolves an open dispute, setting its final status.
-     * @dev Vault remains paused after resolution—governance must unpause via proposal.
-     * @param id ID of the dispute to resolve
-     * @param accepted True if dispute is accepted, false if rejected
+     * @dev Vault remains paused—governance must unpause separately.
      */
     function resolveDispute(uint256 id, bool accepted) external nonReentrant {
         if (msg.sender != governance) revert Unauthorized();
 
         Dispute storage d = disputes[id];
-
         if (d.status == DisputeStatus.None) revert InvalidDispute();
         if (d.status != DisputeStatus.Open) revert AlreadyResolved();
 
         d.status = accepted
             ? DisputeStatus.ResolvedAccepted
             : DisputeStatus.ResolvedRejected;
-
         emit DisputeResolved(id, accepted);
     }
 }

@@ -8,9 +8,10 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
- * @title ProjectVault
- * @notice Single custody layer for V2 projects. Holds funds and enforces state transitions.
- * @dev Clonable via EIP-1167. Contains no business logic—only access control and fund safekeeping.
+ * @title ProjectVault (Final Production Version)
+ * @notice Custody layer for V2 projects.
+ * @dev Minimal, deterministic, non-upgradable logic via clones.
+ * @author Key Lab Technical Team.
  */
 contract ProjectVault is
     Initializable,
@@ -29,8 +30,6 @@ contract ProjectVault is
     error InvalidState();
     error TokenNotAllowed();
     error InsufficientBalance();
-    error VaultNotActive();
-    error VaultNotLocked();
 
     /*//////////////////////////////////////////////////////////////
                                 ROLES
@@ -49,12 +48,8 @@ contract ProjectVault is
         Active,
         Closed
     }
-
     VaultState public state;
-
-    /// @notice Project contract wired post-clone
     address public project;
-
     mapping(address => bool) public isTokenAllowed;
 
     /*//////////////////////////////////////////////////////////////
@@ -68,8 +63,8 @@ contract ProjectVault is
         uint256 amount
     );
     event Activated();
-    event Released(address indexed token, address indexed to, uint256 amount);
     event Closed();
+    event Released(address indexed token, address indexed to, uint256 amount);
     event TokenAllowed(address indexed token, bool allowed);
 
     /*//////////////////////////////////////////////////////////////
@@ -77,20 +72,20 @@ contract ProjectVault is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Initializes the vault with core contracts and roles.
-     * @param project_ Address of the main project contract
-     * @param governance_ Address that will manage state transitions
-     * @param guardian_ Address that can pause and manage token allowlist
+     * @notice Initializes vault with project, roles and allowed token.
+     * @dev All addresses must be non-zero. Sets project as CONTROLLER.
      */
     function initialize(
         address project_,
         address governance_,
-        address guardian_
+        address guardian_,
+        address allowedToken_
     ) external initializer {
         if (
             project_ == address(0) ||
             governance_ == address(0) ||
-            guardian_ == address(0)
+            guardian_ == address(0) ||
+            allowedToken_ == address(0)
         ) revert ZeroAddress();
 
         __AccessControl_init();
@@ -100,23 +95,20 @@ contract ProjectVault is
         project = project_;
         state = VaultState.Locked;
 
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, governance_);
         _grantRole(GOVERNANCE_ROLE, governance_);
         _grantRole(GUARDIAN_ROLE, guardian_);
         _grantRole(CONTROLLER_ROLE, project_);
 
+        isTokenAllowed[allowedToken_] = true;
         emit VaultInitialized(project_, governance_);
+        emit TokenAllowed(allowedToken_, true);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        TOKEN CONFIGURATION
+                            TOKEN CONFIG
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Adds or removes a token from the deposit allowlist.
-     * @param token Token address to configure
-     * @param allowed True to allow deposits, false to block
-     */
     function setTokenAllowed(
         address token,
         bool allowed
@@ -130,20 +122,19 @@ contract ProjectVault is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Deposits tokens on behalf of a user.
-     * @dev Only callable by the project contract during Locked state.
+     * @notice Deposits allowed tokens from a specified address.
+     * @dev Only callable in Locked state by CONTROLLER.
      */
     function depositFrom(
         address from,
         address token,
         uint256 amount
     ) external whenNotPaused nonReentrant onlyRole(CONTROLLER_ROLE) {
-        if (state != VaultState.Locked) revert VaultNotLocked();
+        if (state != VaultState.Locked) revert InvalidState();
         if (!isTokenAllowed[token]) revert TokenNotAllowed();
         if (amount == 0) revert ZeroAmount();
 
         IERC20(token).safeTransferFrom(from, address(this), amount);
-
         emit Deposited(token, from, amount);
     }
 
@@ -151,24 +142,14 @@ contract ProjectVault is
                         STATE TRANSITIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Activates the vault, enabling fund releases.
-     * @dev Can only be called once from Locked state.
-     */
-    function activate() external onlyRole(GOVERNANCE_ROLE) {
+    function activate() external onlyRole(CONTROLLER_ROLE) {
         if (state != VaultState.Locked) revert InvalidState();
-
         state = VaultState.Active;
         emit Activated();
     }
 
-    /**
-     * @notice Closes the vault, preventing further releases.
-     * @dev Can only be called from Active state.
-     */
-    function close() external onlyRole(GOVERNANCE_ROLE) {
-        if (state != VaultState.Active) revert InvalidState();
-
+    function close() external onlyRole(CONTROLLER_ROLE) {
+        if (state == VaultState.Closed) revert InvalidState();
         state = VaultState.Closed;
         emit Closed();
     }
@@ -178,28 +159,26 @@ contract ProjectVault is
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Releases funds from the vault to a recipient.
-     * @dev Only callable by governance when vault is Active.
+     * @notice Releases funds when vault is Active.
+     * @dev Reverts if amount exceeds balance.
      */
     function release(
         address token,
         address to,
         uint256 amount
-    ) external nonReentrant whenNotPaused onlyRole(GOVERNANCE_ROLE) {
-        if (state != VaultState.Active) revert VaultNotActive();
+    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+        if (state != VaultState.Active) revert InvalidState();
         if (amount == 0) revert ZeroAmount();
-
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        if (amount > balance) revert InsufficientBalance();
+        if (amount > IERC20(token).balanceOf(address(this)))
+            revert InsufficientBalance();
 
         IERC20(token).safeTransfer(to, amount);
-
         emit Released(token, to, amount);
     }
 
     /**
-     * @notice Releases funds from the vault to a recipient.
-     * @dev Only callable by controller when vault is Closed.
+     * @notice Releases funds only when vault is Closed.
+     * @dev For final settlements after project completion.
      */
     function releaseOnClose(
         address token,
@@ -208,31 +187,21 @@ contract ProjectVault is
     ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
         if (state != VaultState.Closed) revert InvalidState();
         if (amount == 0) revert ZeroAmount();
-
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        if (amount > balance) revert InsufficientBalance();
+        if (amount > IERC20(token).balanceOf(address(this)))
+            revert InsufficientBalance();
 
         IERC20(token).safeTransfer(to, amount);
-
         emit Released(token, to, amount);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        EMERGENCY CONTROL
+                            EMERGENCY
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Pauses all deposit and release operations.
-     * @dev Emergency function, callable only by guardian.
-     */
     function pause() external onlyRole(GUARDIAN_ROLE) {
         _pause();
     }
 
-    /**
-     * @notice Resumes normal operations after a pause.
-     * @dev Callable only by governance.
-     */
     function unpause() external onlyRole(GOVERNANCE_ROLE) {
         _unpause();
     }
