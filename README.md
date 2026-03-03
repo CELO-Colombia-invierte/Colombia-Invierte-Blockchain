@@ -1,207 +1,321 @@
-> ⚠️ **Status: MVP V1 — Legacy / Stable**
->
-> This version represents the **first functional MVP** of the platform.
-> It is **feature-complete for V1**, deployed on testnet, and currently being
-> integrated with backend and frontend.
->
-> 🔒 **Frozen scope**
->
-> - No new features will be added.
-> - Only critical bug fixes or security patches are allowed.
->
-> 🧭 **Next iteration**
->
-> - Active development continues on **MVP V2** under the `release/mvp-v2` branch.
-> - MVP V2 introduces a redesigned architecture (custody phases, governance, vaults).
->
-> If you are starting new development, **do not build on top of V1**.
+# Colombia Invierte — Platform Contracts (MVP V2)
 
-# 🏗️ Platform Contracts — MVP V1
+> **Status:** Deployed on Celo Sepolia
+> **Architecture:** Modular — Project-Isolated
+> **Network:** Celo Sepolia (Chain ID: 11142220)
 
-Smart contracts for a simple on-chain platform that deploys:
+MVP V2 is the modular evolution of the Colombia Invierte protocol.
 
-- **Natillera** (savings pool)
-- **Tokenizacion** (fixed-price token sale)
+Unlike MVP V1 (monolithic), V2 introduces:
 
-Using a **factory pattern** (`Platform`) with **EIP-1167 minimal proxies** for gas-efficient deployments.
+- Per-project isolated custody
+- Modular financial logic
+- On-chain governance and disputes
+- Dual investment models with equal importance:
+
+  - Tokenization (ERC20 + revenue distribution)
+  - Natillera (collective savings cycles)
+
+This version is architected for production-readiness while keeping clarity and composability as first-class priorities.
 
 ---
 
-## 📦 Tech Stack
+# High-Level Architecture
 
-- Solidity `^0.8.30`
-- Foundry
-- OpenZeppelin
-- Celo (Sepolia Testnet)
+Each project deployed through `PlatformV2` is isolated and composed of multiple modules.
 
----
-
-## 🧱 Architecture Overview
+Core flow:
 
 ```
-Platform (Factory)
-│
-├── Natillera (implementation)
-│   └── cloned per project
-│
-└── Tokenizacion (implementation)
-    └── cloned per project
+PlatformV2 (Factory)
+        │
+        ├── ProjectVault (Custody)
+        ├── RevenueModuleV2 (Tokenization model)
+        ├── NatilleraV2 (Savings model)
+        ├── MilestonesModule (Optional, Tokenization)
+        ├── GovernanceModule
+        └── DisputesModule
 ```
 
-### Key Design Decisions
+No funds are ever stored in the factory.
 
-- **Factory + Clones (EIP-1167)**  
-  Cheap deployments, upgradeable at the factory level.
-- **MVP V1 scope**
-  - No user registry
-  - No upgrade proxies per project
-  - Fixed deployment fee
-- **Creator-based permissions**
-  - Each project has a `creator`
-  - Platform is only responsible for deployment
+Every project has its own Vault and dedicated modules.
 
 ---
 
-## 📍 Deployed Addresses (Celo Sepolia)
+# Supported Investment Models
 
-All contracts are verified on [Celoscan](https://sepolia.celoscan.io).
+## 1️⃣ Tokenization Model
 
-### Implementations
+Users invest stablecoins and receive ERC20 project tokens.
 
-- **Natillera Implementation**: `0x86512228C805dDa61CE8Fd206e102f2D3896eC32`
-- **Tokenizacion Implementation**: `0x4aC6D7F58Dba458eA74179c826378B5ba5fB3179`
+Flow:
 
-### Platform (Factory)
+- Investor approves stablecoin
+- Calls `invest()` on RevenueModuleV2
+- Funds go to ProjectVault
+- Tokens are minted proportionally
+- Revenue can later be deposited and claimed
 
-- **Platform**: `0xbe919DccE1218E2C5e17dc3409aEb3EF38f049A4`
+Components:
 
----
-
-## 🌐 Supported Networks
-
-| Network      | Status    | Chain ID | Currency |
-| ------------ | --------- | -------- | -------- |
-| Celo Sepolia | ✅ Active | 11142220 | CELO     |
-
-**RPC**: `https://forno.celo-sepolia.celo-testnet.org`  
-**Block Explorer**: `https://sepolia.celoscan.io`
+- `ProjectTokenV2`
+- `RevenueModuleV2`
+- `ProjectVault`
+- `MilestonesModule` (optional)
 
 ---
 
-## 🧠 Contracts
+## 2️⃣ Natillera Model (Collective Savings)
 
-### Platform.sol
+Members join a savings circle and contribute periodic quotas.
 
-Factory contract that:
+Flow:
 
-- Deploys Natillera & Tokenizacion clones
-- Collects a fixed ETH deployment fee
-- Tracks projects by incremental `projectId`
+- Member joins via `join()`
+- Pays monthly quotas via `payQuota(monthId)`
+- Late payments may include penalties
+- After cycle completion and Vault closure:
 
-**Main functions:**
+  - Members withdraw their proportional share
 
-- `deployNatillera(...)`
-- `deployTokenizacion(...)`
-- `updateFee(...)`
-- `updateImplementation(...)`
+Components:
 
-### Natillera.sol
+- `NatilleraV2`
+- `ProjectVault`
 
-Savings pool contract (MVP V1):
-
-- Fixed contribution cycles
-- Cycle-based accounting
-- Manual or automatic finalization (anti-funds-locking)
-
-### Tokenizacion.sol
-
-Fixed-price token sale:
-
-- ERC20 or native ETH payments
-- Time-based sale window
-- Manual finalization
-- Creator withdraws collected funds
+Natillera does not mint ERC20 tokens.
 
 ---
 
-## 🧪 Testing
+# Core Contracts
 
-Run all tests:
+## PlatformV2
+
+Factory contract responsible for:
+
+- Creating new projects
+- Deploying isolated modules
+- Emitting `ProjectCreated` event with all module addresses
+
+It holds no user funds.
+
+---
+
+## ProjectVault
+
+Per-project custody contract.
+
+Responsibilities:
+
+- Receive deposits
+- Track funds
+- Release funds when authorized
+- Close project lifecycle
+
+All economic flows pass through the Vault.
+
+---
+
+## RevenueModuleV2
+
+Handles:
+
+- Investment logic
+- Token minting
+- Revenue deposits
+- Claiming of earnings
+- Refunds (if softcap not reached)
+
+---
+
+## NatilleraV2
+
+Handles:
+
+- Member registration
+- Monthly quota payments
+- Penalties
+- Final proportional distribution
+
+---
+
+## MilestonesModule
+
+Optional module for Tokenization projects.
+
+Used to:
+
+- Gate fund releases
+- Require approvals before capital deployment
+
+---
+
+## GovernanceModule
+
+Minimal on-chain governance layer.
+
+Supports:
+
+- Proposal creation
+- Voting
+- Weighted voting logic
+
+---
+
+## DisputesModule
+
+Emergency and conflict resolution module.
+
+Supports:
+
+- Opening disputes
+- Pausing project logic
+- Resolving and resuming operations
+
+---
+
+## FeeManager & FeeTreasury
+
+- FeeManager: Calculates and routes protocol fees
+- FeeTreasury: Receives protocol-level fees
+
+Project funds remain isolated in their Vault.
+
+---
+
+# Deployment — Celo Sepolia
+
+**Chain ID:** 11142220
+
+### Core Contracts
+
+PlatformV2:
+`0xd6BA650Fb9426508707E77e8fb58037B39723F69`
+
+FeeManager:
+`0x36e23fE797F04C5197A713B29508C80b5b9f25aa`
+
+FeeTreasury:
+`0x8392dD63883Fc5566e54B3431E35bA100D10Ae86`
+
+---
+
+### Implementations (Reference / ABI Extraction)
+
+ProjectVault Impl:
+`0x5057e98c1fbe4356f45d3aB6DEb500a544b547c9`
+
+ProjectTokenV2 Impl:
+`0x0F7F23226666E8DF6E170933A0082B5c6774Aeb3`
+
+RevenueModuleV2 Impl:
+`0x1e29a3952EB6cE8919B8925807DBfE0f4dAB4cd4`
+
+NatilleraV2 Impl:
+`0xC9A8e53168e6Aed3d1Ded5CBC756F84f834771Fd`
+
+MilestonesModule Impl:
+`0x840DBE5f1D117b8806C92C77131691DbCB83e043`
+
+GovernanceModule Impl:
+`0x604b58C93a02D49a8f603F8AF086F8b9E3727839`
+
+DisputesModule Impl:
+`0x092A096E486504B678e904537455c31f0fBdd413`
+
+---
+
+# Development
+
+This repository uses Foundry.
+
+### Install
 
 ```bash
-forge test
+forge install
 ```
 
-**Covered in MVP V1:**
-
-- Deployment & initialization
-- Basic happy paths
-- Time-based restrictions
-- Minimal revert conditions
-
-_Note: Edge cases and stress tests are intentionally deferred to later phases._
-
----
-
-## 🚀 Deployment
-
-### Environment Variables
+### Build
 
 ```bash
-export PRIVATE_KEY=0xYOUR_PRIVATE_KEY
-export RPC_URL=https://forno.celo-sepolia.celo-testnet.org
+forge build
 ```
 
-### Deploy Script
+### Run Tests
 
 ```bash
-forge script script/Deploy.s.sol \
-  --rpc-url $RPC_URL \
-  --broadcast \
-  --verify \
-  --slow
+forge test -vv
 ```
 
-### Verification
+### Gas Report
 
-Contracts are automatically verified using Foundry. Requirements:
-
-- Correct RPC (Celo Sepolia)
-- Sufficient CELO balance
-- `PRIVATE_KEY` configured
+```bash
+forge test --gas-report
+```
 
 ---
 
-## 📤 Post-Deploy Checklist
+# Project Lifecycle
 
-1. **Export ABIs** (`out/*.json`)
-2. **Backend:**
-   - Install dependencies
-   - Create services to interact with Platform
-3. **Frontend:**
-   - Consume Platform events
-   - Instantiate projects
-4. **Document deployed addresses**
-
----
-
-## ⚠️ MVP V1 Limitations
-
-- No upgradeability per project
-- No emergency pause
-- No role system
-- No treasury split
-
-_These are explicit design choices for MVP V1._
+1. Project created via PlatformV2
+2. Vault initialized
+3. Users interact with RevenueModule or Natillera
+4. Funds accumulated in Vault
+5. Governance / Milestones (if applicable)
+6. Project closed
+7. Final claims or withdrawals
 
 ---
 
-## 🛣️ Roadmap
+# Security Principles
 
-- **MVP 1.5:** Hardening + extra tests
-- **MVP 2:** Roles, registry, pausability
-- **Audit & Mainnet**
+- Isolated custody per project
+- No funds in factory
+- Explicit state transitions
+- Event-driven indexing
+- Emergency dispute mechanism
+- Refund path for failed funding (Tokenization)
 
 ---
 
-Built with ❤️ and gas awareness.
+# Backend & Frontend Integration
+
+V2 is event-driven.
+
+Backend must:
+
+- Listen to `ProjectCreated`
+- Store module addresses per project
+- Dynamically instantiate contracts
+
+Frontend must:
+
+- Never hardcode project module addresses
+- Fetch them from backend
+- Use BigInt for all monetary values
+
+---
+
+# Disclaimer
+
+This deployment is currently on Celo Sepolia testnet.
+
+Mainnet deployment will require:
+
+- Final security review
+- Permission verification
+- Economic simulation validation
+- Multisig administration setup
+
+Use at your own risk.
+
+---
+
+# Versioning
+
+- MVP V1: Frozen (monolithic)
+- MVP V2: Modular architecture
+- Future versions will follow semantic versioning
+
+---
