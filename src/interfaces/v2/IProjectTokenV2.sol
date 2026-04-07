@@ -47,4 +47,13 @@ interface IProjectTokenV2 {
     function setRevenueModule(address module) external;
 
     function maxSupply() external view returns (uint256);
+
+    function balanceOf(address user) external view returns (uint256);
+
+    function totalSupply() external view returns (uint256);
+
+    function getPastVotes(
+        address account,
+        uint256 blockNumber
+    ) external view returns (uint256);
 }

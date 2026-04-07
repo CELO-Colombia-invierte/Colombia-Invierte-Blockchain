@@ -6,6 +6,7 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
 
 /**
  * @title ProjectVault (Final Production Version)
@@ -17,19 +18,10 @@ contract ProjectVault is
     Initializable,
     AccessControlUpgradeable,
     PausableUpgradeable,
-    ReentrancyGuardUpgradeable
+    ReentrancyGuardUpgradeable,
+    IProjectVault
 {
     using SafeERC20 for IERC20;
-
-    /*//////////////////////////////////////////////////////////////
-                                ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    error ZeroAddress();
-    error ZeroAmount();
-    error InvalidState();
-    error TokenNotAllowed();
-    error InsufficientBalance();
 
     /*//////////////////////////////////////////////////////////////
                                 ROLES
@@ -43,11 +35,6 @@ contract ProjectVault is
                                 STATE
     //////////////////////////////////////////////////////////////*/
 
-    enum VaultState {
-        Locked,
-        Active,
-        Closed
-    }
     VaultState public state;
     address public project;
     mapping(address => bool) public isTokenAllowed;
@@ -113,6 +100,9 @@ contract ProjectVault is
         address token,
         bool allowed
     ) external onlyRole(GUARDIAN_ROLE) {
+        if (!allowed && IERC20(token).balanceOf(address(this)) > 0) {
+            revert InvalidState();
+        }
         isTokenAllowed[token] = allowed;
         emit TokenAllowed(token, allowed);
     }
@@ -142,13 +132,13 @@ contract ProjectVault is
                         STATE TRANSITIONS
     //////////////////////////////////////////////////////////////*/
 
-    function activate() external onlyRole(CONTROLLER_ROLE) {
+    function activate() external onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Locked) revert InvalidState();
         state = VaultState.Active;
         emit Activated();
     }
 
-    function close() external onlyRole(CONTROLLER_ROLE) {
+    function close() external onlyRole(GOVERNANCE_ROLE) {
         if (state == VaultState.Closed) revert InvalidState();
         state = VaultState.Closed;
         emit Closed();
@@ -166,9 +156,11 @@ contract ProjectVault is
         address token,
         address to,
         uint256 amount
-    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+    ) external nonReentrant whenNotPaused onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Active) revert InvalidState();
         if (amount == 0) revert ZeroAmount();
+        if (to == address(0)) revert ZeroAddress();
+        if (!isTokenAllowed[token]) revert TokenNotAllowed();
         if (amount > IERC20(token).balanceOf(address(this)))
             revert InsufficientBalance();
 
@@ -184,9 +176,12 @@ contract ProjectVault is
         address token,
         address to,
         uint256 amount
-    ) external nonReentrant whenNotPaused onlyRole(CONTROLLER_ROLE) {
+    ) external nonReentrant whenNotPaused onlyRole(GOVERNANCE_ROLE) {
         if (state != VaultState.Closed) revert InvalidState();
         if (amount == 0) revert ZeroAmount();
+        if (to == address(0)) revert ZeroAddress();
+
+        if (!isTokenAllowed[token]) revert TokenNotAllowed();
         if (amount > IERC20(token).balanceOf(address(this)))
             revert InsufficientBalance();
 

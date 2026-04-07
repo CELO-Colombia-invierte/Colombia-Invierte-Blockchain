@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ERC20VotesUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20VotesUpgradeable.sol";
+import {VotesUpgradeable} from "@openzeppelin/contracts-upgradeable/governance/utils/VotesUpgradeable.sol";
 
 import {IProjectTokenV2} from "../../../interfaces/v2/IProjectTokenV2.sol";
 import {IRevenueModuleV2} from "../../../interfaces/v2/IRevenueModuleV2.sol";
@@ -115,5 +116,47 @@ contract ProjectTokenV2 is
             revenueModule.beforeTokenTransfer(from, to, value);
 
         super._update(from, to, value);
+    }
+
+    function _getVotingUnits(
+        address account
+    ) internal view override returns (uint256) {
+        return balanceOf(account);
+    }
+
+    function getPastVotes(
+        address account,
+        uint256 blockNumber
+    )
+        public
+        view
+        override(VotesUpgradeable, IProjectTokenV2)
+        returns (uint256)
+    {
+        return super.getPastVotes(account, blockNumber);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                VIEWERS
+    //////////////////////////////////////////////////////////////*/
+
+    function balanceOf(
+        address account
+    )
+        public
+        view
+        override(ERC20Upgradeable, IProjectTokenV2)
+        returns (uint256)
+    {
+        return super.balanceOf(account);
+    }
+
+    function totalSupply()
+        public
+        view
+        override(ERC20Upgradeable, IProjectTokenV2)
+        returns (uint256)
+    {
+        return super.totalSupply();
     }
 }

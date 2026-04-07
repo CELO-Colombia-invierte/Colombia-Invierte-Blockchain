@@ -8,11 +8,11 @@ import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
 import {IProjectTokenV2} from "../../../interfaces/v2/IProjectTokenV2.sol";
 import {IRevenueModuleV2} from "../../../interfaces/v2/IRevenueModuleV2.sol";
 import {INatilleraV2} from "../../../interfaces/v2/INatilleraV2.sol";
-
-// Nuevas interfaces requeridas
 import {IMilestonesModule} from "../../../interfaces/v2/IMilestonesModule.sol";
 import {IGovernanceModule} from "../../../interfaces/v2/IGovernanceModule.sol";
 import {IDisputesModule} from "../../../interfaces/v2/IDisputesModule.sol";
+import {RevenueVoting} from "../tokenization/RevenueVoting.sol";
+import {NatilleraVoting} from "../natillera/NatilleraVoting.sol";
 
 /**
  * @title PlatformV2
@@ -150,6 +150,9 @@ contract PlatformV2 {
         address milestones = MILESTONES_IMPLEMENTATION.clone();
         address governance = GOVERNANCE_IMPLEMENTATION.clone();
         address disputes = DISPUTES_IMPLEMENTATION.clone();
+        address revenueVoting = address(
+            new RevenueVoting(IProjectTokenV2(token))
+        );
 
         // 2. Initialize Core (Factory as temporary admin)
         IProjectVault(vault).initialize(
@@ -189,7 +192,11 @@ contract PlatformV2 {
 
         // 3. Initialize Peripherals
         IMilestonesModule(milestones).initialize(vault, governance);
-        IGovernanceModule(governance).initialize(vault, milestones);
+        IGovernanceModule(governance).initialize(
+            vault,
+            milestones,
+            revenueVoting
+        );
         IDisputesModule(disputes).initialize(vault, governance);
 
         // 4. Role Orchestration (Wiring)
@@ -199,7 +206,6 @@ contract PlatformV2 {
         IAccessControl(vault).grantRole(CONTROLLER_ROLE, milestones);
 
         // Governance needs all roles to execute proposals (activate, pause, unpause, close)
-        IAccessControl(vault).grantRole(CONTROLLER_ROLE, governance);
         IAccessControl(vault).grantRole(GUARDIAN_ROLE, governance);
         IAccessControl(vault).grantRole(GOVERNANCE_ROLE, governance);
 
@@ -257,6 +263,9 @@ contract PlatformV2 {
         address natillera = NATILLERA_IMPLEMENTATION.clone();
         address governance = GOVERNANCE_IMPLEMENTATION.clone();
         address disputes = DISPUTES_IMPLEMENTATION.clone();
+        address natilleraVoting = address(
+            new NatilleraVoting(INatilleraV2(natillera))
+        );
 
         // 2. Initialize Core (Factory as temporary admin)
         IProjectVault(vault).initialize(
@@ -279,14 +288,17 @@ contract PlatformV2 {
         );
 
         // 3. Initialize Peripherals (Natillera does not use Milestones)
-        IGovernanceModule(governance).initialize(vault, address(0));
+        IGovernanceModule(governance).initialize(
+            vault,
+            address(0),
+            natilleraVoting
+        );
         IDisputesModule(disputes).initialize(vault, governance);
 
         // 4. Role Orchestration (Wiring)
         IAccessControl(vault).grantRole(CONTROLLER_ROLE, natillera);
 
         // Governance needs all roles
-        IAccessControl(vault).grantRole(CONTROLLER_ROLE, governance);
         IAccessControl(vault).grantRole(GUARDIAN_ROLE, governance);
         IAccessControl(vault).grantRole(GOVERNANCE_ROLE, governance);
 

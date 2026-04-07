@@ -4,16 +4,16 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 
-import {PlatformV2} from "../../../src/contracts/v2/core/PlatformV2.sol";
-import {ProjectVault} from "../../../src/contracts/v2/core/ProjectVault.sol";
-import {ProjectTokenV2} from "../../../src/contracts/v2/tokenization/ProjectTokenV2.sol";
-import {RevenueModuleV2} from "../../../src/contracts/v2/tokenization/RevenueModuleV2.sol";
-import {NatilleraV2} from "../../../src/contracts/v2/natillera/NatilleraV2.sol";
-import {DisputesModule} from "../../../src/contracts/v2/modules/DisputesModule.sol";
-import {GovernanceModule} from "../../../src/contracts/v2/modules/GovernanceModule.sol";
-import {MilestonesModule} from "../../../src/contracts/v2/modules/MilestonesModule.sol";
-import {FeeManager} from "../../../src/contracts/v2/fees/FeeManager.sol";
-import {FeeTreasury} from "../../../src/contracts/v2/fees/FeeTreasury.sol";
+import {PlatformV2} from "../src/contracts/v2/core/PlatformV2.sol";
+import {ProjectVault} from "../src/contracts/v2/core/ProjectVault.sol";
+import {ProjectTokenV2} from "../src/contracts/v2/tokenization/ProjectTokenV2.sol";
+import {RevenueModuleV2} from "../src/contracts/v2/tokenization/RevenueModuleV2.sol";
+import {NatilleraV2} from "../src/contracts/v2/natillera/NatilleraV2.sol";
+import {DisputesModule} from "../src/contracts/v2/modules/DisputesModule.sol";
+import {GovernanceModule} from "../src/contracts/v2/modules/GovernanceModule.sol";
+import {MilestonesModule} from "../src/contracts/v2/modules/MilestonesModule.sol";
+import {FeeManager} from "../src/contracts/v2/fees/FeeManager.sol";
+import {FeeTreasury} from "../src/contracts/v2/fees/FeeTreasury.sol";
 
 /**
  * @title DeployV2

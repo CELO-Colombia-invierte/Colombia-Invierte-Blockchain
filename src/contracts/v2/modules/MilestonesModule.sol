@@ -77,14 +77,22 @@ contract MilestonesModule is
         if (amount == 0) revert ZeroAmount();
 
         id = ++milestoneCount;
+        bytes32 descriptionHash = keccak256(bytes(description));
         milestones[id] = Milestone({
-            description: description,
+            descriptionHash: descriptionHash,
             token: token,
             recipient: recipient,
             amount: amount,
             status: MilestoneStatus.Proposed
         });
-        emit MilestoneProposed(id);
+        emit MilestoneProposed(
+            id,
+            msg.sender,
+            token,
+            recipient,
+            amount,
+            description
+        );
     }
 
     /**

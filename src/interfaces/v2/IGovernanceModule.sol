@@ -17,7 +17,8 @@ interface IGovernanceModule {
         FreezeVault,
         UnfreezeVault,
         ApproveMilestone,
-        ExecuteMilestone
+        ExecuteMilestone,
+        Disbursement
     }
     enum Vote {
         None,
@@ -33,28 +34,69 @@ interface IGovernanceModule {
         Action action;
         uint256 targetId;
         uint256 startTime;
+        uint256 snapshotBlock;
         uint256 yesVotes;
         uint256 noVotes;
+        uint256 amount;
+        address recipient;
+        address token;
+        bytes32 descriptionHash;
         bool executed;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                                ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    error ZeroAddress();
+    error InvalidProposal();
+    error VotingStillOpen();
+    error VotingClosed();
+    error AlreadyVoted();
+    error AlreadyExecuted();
+    error QuorumNotReached();
+    error InvalidVote();
+    error InvalidDisbursement();
+    error Unauthorized();
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event ProposalCreated(uint256 indexed id, Action action);
+    event ProposalCreated(
+        uint256 indexed id,
+        address indexed proposer,
+        address token,
+        address recipient,
+        uint256 amount,
+        string description
+    );
     event VoteCast(uint256 indexed id, address indexed voter, Vote vote);
     event ProposalExecuted(uint256 indexed id, Action action);
+    event GovernanceInitialized(address indexed vault);
+    event DisbursementExecuted(
+        address indexed recipient,
+        address indexed token,
+        uint256 amount
+    );
 
     /*//////////////////////////////////////////////////////////////
                                 CORE
     //////////////////////////////////////////////////////////////*/
 
-    function initialize(address vault_, address milestones_) external;
+    function initialize(
+        address vault_,
+        address milestones_,
+        address votingStrategy_
+    ) external;
 
     function propose(
         Action action,
-        uint256 targetId
+        uint256 targetId,
+        uint256 amount,
+        address recipient,
+        address token,
+        string calldata description
     ) external returns (uint256);
 
     function vote(uint256 proposalId, Vote vote) external;

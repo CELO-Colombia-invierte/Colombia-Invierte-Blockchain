@@ -15,7 +15,7 @@ interface IMilestonesModule {
     }
 
     struct Milestone {
-        string description;
+        bytes32 descriptionHash;
         address token;
         address recipient;
         uint256 amount;
@@ -26,7 +26,14 @@ interface IMilestonesModule {
         address indexed vault,
         address indexed governance
     );
-    event MilestoneProposed(uint256 indexed id);
+    event MilestoneProposed(
+        uint256 indexed id,
+        address indexed proposer,
+        address token,
+        address recipient,
+        uint256 amount,
+        string description
+    );
     event MilestoneApproved(uint256 indexed id);
     event MilestoneExecuted(uint256 indexed id);
 
@@ -51,7 +58,7 @@ interface IMilestonesModule {
         external
         view
         returns (
-            string memory description,
+            bytes32 descriptionHash,
             address token,
             address recipient,
             uint256 amount,

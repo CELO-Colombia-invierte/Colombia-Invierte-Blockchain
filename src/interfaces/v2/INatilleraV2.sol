@@ -47,4 +47,8 @@ interface INatilleraV2 {
     function isMatured() external view returns (bool);
 
     function totalShares() external view returns (uint256);
+
+    function isMember(address user) external view returns (bool);
+
+    function memberCount() external view returns (uint256);
 }
