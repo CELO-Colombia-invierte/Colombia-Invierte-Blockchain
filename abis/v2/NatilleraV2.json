@@ -1,5 +1,10 @@
 [
   {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "function",
     "name": "claimFinal",
     "inputs": [],
@@ -79,6 +84,19 @@
   },
   {
     "type": "function",
+    "name": "feesSettled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "finalPool",
     "inputs": [],
     "outputs": [
@@ -89,6 +107,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "finalizePool",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -162,6 +187,25 @@
     "inputs": [
       {
         "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isStakeholder",
+    "inputs": [
+      {
+        "name": "user",
         "type": "address",
         "internalType": "address"
       }
@@ -286,6 +330,19 @@
   },
   {
     "type": "function",
+    "name": "protocolFee",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "quota",
     "inputs": [],
     "outputs": [
@@ -296,6 +353,31 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "returnYield",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleFees",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -325,7 +407,33 @@
   },
   {
     "type": "function",
+    "name": "totalDeposited",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "totalShares",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalYieldReturned",
     "inputs": [],
     "outputs": [
       {
@@ -389,6 +497,25 @@
   },
   {
     "type": "event",
+    "name": "FeesSettled",
+    "inputs": [
+      {
+        "name": "reserved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Initialized",
     "inputs": [
       {
@@ -415,6 +542,19 @@
   },
   {
     "type": "event",
+    "name": "PoolFinalized",
+    "inputs": [
+      {
+        "name": "finalPool",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "QuotaPaid",
     "inputs": [
       {
@@ -433,8 +573,38 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "YieldReturned",
+    "inputs": [
+      {
+        "name": "returner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyClaimed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AlreadyFinalized",
     "inputs": []
   },
   {
@@ -450,6 +620,11 @@
   {
     "type": "error",
     "name": "CycleClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FullyClaimed",
     "inputs": []
   },
   {
@@ -474,12 +649,27 @@
   },
   {
     "type": "error",
+    "name": "InvalidState",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVaultState",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "MaxMembersReached",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NotClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotFinalized",
     "inputs": []
   },
   {
@@ -504,12 +694,32 @@
   },
   {
     "type": "error",
+    "name": "Unauthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroAddress",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroPool",
     "inputs": []
   },
   {

@@ -7,86 +7,93 @@ pragma solidity ^0.8.30;
  * @author Key Lab Technical Team.
  */
 interface IRevenueModuleV2 {
-    /*//////////////////////////////////////////////////////////////
-                                STRUCTS
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              STRUCTS
+  //////////////////////////////////////////////////////////////*/
 
-    struct InitParams {
-        address token;
-        address vault;
-        address settlementToken;
-        uint256 fundingTarget;
-        uint256 minimumCap;
-        uint256 tokenPrice;
-        uint256 saleStart;
-        uint256 saleEnd;
-        uint256 distributionEnd;
-        uint16 expectedApy;
-        address governance;
-        address projectCreator;
-        address feeManager;
-    }
+  struct InitParams {
+    address token;
+    address vault;
+    address settlementToken;
+    uint256 fundingTarget;
+    uint256 minimumCap;
+    uint256 tokenPrice;
+    uint256 saleStart;
+    uint256 saleEnd;
+    uint256 distributionEnd;
+    uint16 expectedApy;
+    address governance;
+    address projectCreator;
+    address feeManager;
+  }
 
-    /*//////////////////////////////////////////////////////////////
-                                ENUMS
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              ENUMS
+  //////////////////////////////////////////////////////////////*/
 
-    enum State {
-        Pending,
-        Active,
-        Successful,
-        Failed
-    }
+  enum State {
+    Pending,
+    Active,
+    Successful,
+    Failed
+  }
 
-    /*//////////////////////////////////////////////////////////////
-                                ERRORS
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              ERRORS
+  //////////////////////////////////////////////////////////////*/
 
-    error SaleClosed();
-    error FundingTargetReached();
-    error ZeroAmount();
-    error DistributionEnded();
-    error NothingToClaim();
-    error Unauthorized();
-    error InvalidState();
+  error SaleClosed();
+  error FundingTargetReached();
+  error ZeroAmount();
+  error DistributionEnded();
+  error NothingToClaim();
+  error Unauthorized();
+  error InvalidState();
+  error VaultPaused();
+  error InvalidVaultState();
+  error BelowMinimumCap();
+  error InvalidAmount();
 
-    /*//////////////////////////////////////////////////////////////
-                                EVENTS
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              EVENTS
+  //////////////////////////////////////////////////////////////*/
 
-    event Invested(
-        address indexed investor,
-        uint256 amount,
-        uint256 tokensMinted
-    );
-    event RevenueDeposited(uint256 amount);
-    event Claimed(address indexed user, uint256 amount);
-    event SaleFinalized();
-    event Refunded(address indexed user, uint256 amount);
+  event Invested(address indexed investor, uint256 amount, uint256 tokensMinted);
+  event RevenueDeposited(uint256 amount);
+  event Claimed(address indexed user, uint256 amount);
+  event SaleFinalized();
+  event Refunded(address indexed user, uint256 amount);
+  event SaleFailed();
 
-    /*//////////////////////////////////////////////////////////////
-                                CORE
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              CORE
+  //////////////////////////////////////////////////////////////*/
 
-    function initialize(InitParams calldata params) external;
+  function initialize(InitParams calldata params) external;
 
-    function state() external view returns (State);
+  function state() external view returns (State);
 
-    function invest(uint256 amount) external;
+  function invest(uint256 amount) external;
 
-    function finalizeSale() external;
+  function getMaxInvestable(uint256 amount) external view returns (uint256 validAmount, uint256 remainder);
 
-    function refund() external;
+  function finalizeSale() external;
 
-    function depositRevenue(uint256 amount) external;
+  function refund() external;
 
-    function claim() external;
+  function depositRevenue(uint256 amount) external;
 
-    function pending(address user) external view returns (uint256);
+  function claim() external;
 
-    function beforeTokenTransfer(
-        address from,
-        address to,
-        uint256 amount
-    ) external;
+  function pending(address user) external view returns (uint256);
+
+  function beforeTokenTransfer(address from, address to, uint256 amount) external;
+
+  function updatePool() external;
+
+  function finalizeFailure() external;
+
+  function saleFinalized() external view returns (bool);
+
+  function isStakeholder(address user) external view returns (bool);
 }

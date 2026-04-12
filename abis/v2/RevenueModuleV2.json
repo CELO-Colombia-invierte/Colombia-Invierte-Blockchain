@@ -1,5 +1,10 @@
 [
   {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "function",
     "name": "accRewardPerShare",
     "inputs": [],
@@ -27,7 +32,7 @@
         "internalType": "address"
       },
       {
-        "name": "",
+        "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -96,6 +101,13 @@
   },
   {
     "type": "function",
+    "name": "finalizeFailure",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "finalizeSale",
     "inputs": [],
     "outputs": [],
@@ -110,6 +122,30 @@
         "name": "",
         "type": "uint128",
         "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getMaxInvestable",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "validAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remainder",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -241,6 +277,25 @@
   },
   {
     "type": "function",
+    "name": "isStakeholder",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "minimumCap",
     "inputs": [],
     "outputs": [
@@ -262,6 +317,19 @@
         "internalType": "address"
       }
     ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingRevenue",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
@@ -416,6 +484,13 @@
   },
   {
     "type": "function",
+    "name": "updatePool",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "vault",
     "inputs": [],
     "outputs": [
@@ -518,9 +593,20 @@
   },
   {
     "type": "event",
+    "name": "SaleFailed",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SaleFinalized",
     "inputs": [],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "BelowMinimumCap",
+    "inputs": []
   },
   {
     "type": "error",
@@ -534,12 +620,22 @@
   },
   {
     "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidInitialization",
     "inputs": []
   },
   {
     "type": "error",
     "name": "InvalidState",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidVaultState",
     "inputs": []
   },
   {
@@ -559,23 +655,17 @@
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleClosed",
     "inputs": []
   },
   {
     "type": "error",
     "name": "Unauthorized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultPaused",
     "inputs": []
   },
   {

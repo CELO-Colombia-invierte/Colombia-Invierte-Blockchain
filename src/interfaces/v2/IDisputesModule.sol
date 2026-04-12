@@ -7,40 +7,61 @@ pragma solidity ^0.8.30;
  * @author Key Lab Technical Team.
  */
 interface IDisputesModule {
-    enum DisputeStatus {
-        None,
-        Open,
-        ResolvedAccepted,
-        ResolvedRejected
-    }
+  /*//////////////////////////////////////////////////////////////
+                              ENUMS
+  //////////////////////////////////////////////////////////////*/
 
-    struct Dispute {
-        address opener;
-        string reason;
-        uint256 openedAt;
-        DisputeStatus status;
-    }
+  enum DisputeStatus {
+    None,
+    Open,
+    Frozen,
+    ResolvedAccepted,
+    ResolvedRejected
+  }
 
-    event DisputeOpened(uint256 indexed id, address indexed opener);
-    event DisputeResolved(uint256 indexed id, bool accepted);
+  /*//////////////////////////////////////////////////////////////
+                              STRUCTS
+  //////////////////////////////////////////////////////////////*/
 
-    function initialize(address vault_, address governance_) external;
+  struct Dispute {
+    address opener;
+    string reason;
+    uint256 openedAt;
+    DisputeStatus status;
+  }
 
-    function openDispute(string calldata reason) external returns (uint256);
+  /*//////////////////////////////////////////////////////////////
+                              ERRORS
+  //////////////////////////////////////////////////////////////*/
 
-    function resolveDispute(uint256 id, bool accepted) external;
+  error ZeroAddress();
+  error NotActiveVault();
+  error InvalidDispute();
+  error AlreadyResolved();
+  error Unauthorized();
+  error AlreadyPaused();
+  error AlreadyProcessed();
 
-    function disputeCount() external view returns (uint256);
+  /*//////////////////////////////////////////////////////////////
+                              EVENTS
+  //////////////////////////////////////////////////////////////*/
 
-    function disputes(
-        uint256 id
-    )
-        external
-        view
-        returns (
-            address opener,
-            string memory reason,
-            uint256 openedAt,
-            DisputeStatus status
-        );
+  event DisputesInitialized(address indexed vault, address indexed governance);
+  event DisputeOpened(uint256 indexed id, address indexed opener);
+  event DisputeResolved(uint256 indexed id, bool accepted);
+
+  function initialize(address vault_, address governance_) external;
+
+  function openDispute(string calldata reason) external returns (uint256);
+
+  function resolveDispute(uint256 id, bool accepted) external;
+
+  function disputeCount() external view returns (uint256);
+
+  function disputes(uint256 id)
+    external
+    view
+    returns (address opener, string memory reason, uint256 openedAt, DisputeStatus status);
+
+  function markFrozen(uint256 id) external;
 }

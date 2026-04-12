@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
+import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 
-import {IRevenueModuleV2} from "../../../interfaces/v2/IRevenueModuleV2.sol";
-import {IProjectVault} from "../../../interfaces/v2/IProjectVault.sol";
-import {IProjectTokenV2} from "../../../interfaces/v2/IProjectTokenV2.sol";
-import {IFeeManager} from "../../../interfaces/v2/IFeeManager.sol";
+import {IFeeManager} from '../../../interfaces/v2/IFeeManager.sol';
+import {IProjectTokenV2} from '../../../interfaces/v2/IProjectTokenV2.sol';
+import {IProjectVault} from '../../../interfaces/v2/IProjectVault.sol';
+import {IRevenueModuleV2} from '../../../interfaces/v2/IRevenueModuleV2.sol';
 
 /**
  * @title RevenueModuleV2
@@ -16,270 +16,317 @@ import {IFeeManager} from "../../../interfaces/v2/IFeeManager.sol";
  * @dev Clonable via EIP-1167. Handles funding lifecycle and reward accrual.
  * @author Key Lab Technical Team.
  */
-contract RevenueModuleV2 is
-    Initializable,
-    ReentrancyGuardUpgradeable,
-    IRevenueModuleV2
-{
-    using SafeERC20 for IERC20;
+contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueModuleV2 {
+  using SafeERC20 for IERC20;
 
-    uint256 internal constant PRECISION = 1e12;
-    bytes32 internal constant MODULE_ID = keccak256("TOKENIZATION_V2");
+  uint256 internal constant PRECISION = 1e12;
+  bytes32 internal constant MODULE_ID = keccak256('TOKENIZATION_V2');
 
-    /*//////////////////////////////////////////////////////////////
-                                STORAGE
-    //////////////////////////////////////////////////////////////*/
+  /*//////////////////////////////////////////////////////////////
+                              STORAGE
+  //////////////////////////////////////////////////////////////*/
 
-    IProjectTokenV2 public token;
-    IProjectVault public vault;
-    IFeeManager public feeManager;
-    IERC20 public settlementToken;
+  IProjectTokenV2 public token;
+  IProjectVault public vault;
+  IFeeManager public feeManager;
+  IERC20 public settlementToken;
 
-    address public governance;
-    address public projectCreator;
+  address public governance;
+  address public projectCreator;
 
-    uint128 public fundingTarget;
-    uint128 public minimumCap;
-    uint128 public tokenPrice;
+  uint256 public pendingRevenue;
 
-    uint64 public saleStart;
-    uint64 public saleEnd;
-    uint64 public distributionEnd;
+  uint128 public fundingTarget;
+  uint128 public minimumCap;
+  uint128 public tokenPrice;
 
-    uint16 public expectedApy;
+  uint64 public saleStart;
+  uint64 public saleEnd;
+  uint64 public distributionEnd;
 
-    uint128 public totalRaised;
-    uint128 public accRewardPerShare;
+  uint16 public expectedApy;
 
-    bool public saleFinalized;
+  uint128 public totalRaised;
+  uint128 public accRewardPerShare;
 
-    mapping(address => uint256) public investments;
-    mapping(address => uint256) public rewardDebt;
+  bool public saleFinalized;
 
-    /*//////////////////////////////////////////////////////////////
-                            INITIALIZE
-    //////////////////////////////////////////////////////////////*/
+  mapping(address => uint256) public investments;
+  mapping(address => uint256) public rewardDebt;
 
-    function initialize(InitParams calldata p) external initializer {
-        if (
-            p.token == address(0) ||
-            p.vault == address(0) ||
-            p.settlementToken == address(0) ||
-            p.governance == address(0) ||
-            p.projectCreator == address(0) ||
-            p.feeManager == address(0)
-        ) revert Unauthorized();
+  modifier whenVaultOperational() {
+    _whenVaultOperational();
+    _;
+  }
 
-        __ReentrancyGuard_init();
+  function _whenVaultOperational() internal view {
+    if (vault.paused()) revert VaultPaused();
+    if (vault.state() != IProjectVault.VaultState.Active) {
+      revert InvalidVaultState();
+    }
+  }
 
-        token = IProjectTokenV2(p.token);
-        vault = IProjectVault(p.vault);
-        settlementToken = IERC20(p.settlementToken);
-        feeManager = IFeeManager(p.feeManager);
+  /*//////////////////////////////////////////////////////////////
+                          CONSTRUCTOR
+  //////////////////////////////////////////////////////////////*/
 
-        fundingTarget = uint128(p.fundingTarget);
-        minimumCap = uint128(p.minimumCap);
-        tokenPrice = uint128(p.tokenPrice);
+  constructor() {
+    _disableInitializers();
+  }
 
-        saleStart = uint64(p.saleStart);
-        saleEnd = uint64(p.saleEnd);
-        distributionEnd = uint64(p.distributionEnd);
+  /*//////////////////////////////////////////////////////////////
+                          INITIALIZE
+  //////////////////////////////////////////////////////////////*/
 
-        expectedApy = p.expectedApy;
-
-        governance = p.governance;
-        projectCreator = p.projectCreator;
+  function initialize(InitParams calldata p) external initializer {
+    if (
+      p.token == address(0) || p.vault == address(0) || p.settlementToken == address(0) || p.governance == address(0)
+        || p.projectCreator == address(0) || p.feeManager == address(0)
+    ) revert Unauthorized();
+    if (p.saleStart >= p.saleEnd || p.saleEnd >= p.distributionEnd) {
+      revert InvalidState();
     }
 
-    /*//////////////////////////////////////////////////////////////
-                                STATE
-    //////////////////////////////////////////////////////////////*/
+    __ReentrancyGuard_init();
 
-    function state() public view override returns (State) {
-        uint256 ts = block.timestamp;
-        if (ts < saleStart) return State.Pending;
-        if (ts <= saleEnd) {
-            if (totalRaised >= fundingTarget) return State.Successful;
-            return State.Active;
-        }
-        if (totalRaised >= minimumCap) return State.Successful;
-        return State.Failed;
+    token = IProjectTokenV2(p.token);
+    vault = IProjectVault(p.vault);
+    settlementToken = IERC20(p.settlementToken);
+    feeManager = IFeeManager(p.feeManager);
+
+    fundingTarget = uint128(p.fundingTarget);
+    minimumCap = uint128(p.minimumCap);
+    tokenPrice = uint128(p.tokenPrice);
+
+    saleStart = uint64(p.saleStart);
+    saleEnd = uint64(p.saleEnd);
+    distributionEnd = uint64(p.distributionEnd);
+
+    expectedApy = p.expectedApy;
+
+    governance = p.governance;
+    projectCreator = p.projectCreator;
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                              STATE
+  //////////////////////////////////////////////////////////////*/
+
+  function state() public view override returns (State) {
+    uint256 ts = block.timestamp;
+    if (ts < saleStart) return State.Pending;
+    if (ts <= saleEnd) {
+      if (totalRaised >= fundingTarget) return State.Successful;
+      return State.Active;
+    }
+    if (totalRaised >= minimumCap) return State.Successful;
+    return State.Failed;
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                              INVEST
+  //////////////////////////////////////////////////////////////*/
+
+  function invest(uint256 amount) external nonReentrant whenVaultOperational {
+    updatePool();
+
+    if (state() != State.Active) revert SaleClosed();
+    if (amount == 0) revert ZeroAmount();
+    if (amount % tokenPrice != 0) revert InvalidAmount();
+
+    uint128 raised = totalRaised;
+    if (raised + amount > fundingTarget) revert FundingTargetReached();
+    if (amount > type(uint128).max - raised) revert InvalidState();
+
+    uint256 userBalance = IERC20(address(token)).balanceOf(msg.sender);
+    uint256 accumulated = (userBalance * accRewardPerShare) / PRECISION;
+    uint256 pendingRewards;
+
+    if (accumulated > rewardDebt[msg.sender]) {
+      pendingRewards = accumulated - rewardDebt[msg.sender];
     }
 
-    /*//////////////////////////////////////////////////////////////
-                                INVEST
-    //////////////////////////////////////////////////////////////*/
+    uint256 tokensToMint = amount / tokenPrice;
+    // casting to 'uint128' is safe because we check that 'amount' does not exceed 'fundingTarget' which is a 'uint128'
+    // forge-lint: disable-next-line(unsafe-typecast)
+    uint128 amount128 = uint128(amount);
 
-    /**
-     * @notice Invests settlement tokens in exchange for project tokens.
-     * @dev Transfers funds directly to vault. Updates reward debt.
-     */
-    function invest(uint256 amount) external nonReentrant {
-        if (state() != State.Active) revert SaleClosed();
-        if (amount == 0) revert ZeroAmount();
+    totalRaised = raised + amount128;
+    investments[msg.sender] += amount;
 
-        uint128 raised = totalRaised;
-        if (raised + amount > fundingTarget) revert FundingTargetReached();
-        if (amount > type(uint128).max - raised) revert InvalidState();
+    vault.depositFrom(msg.sender, address(settlementToken), amount);
 
-        uint256 tokensToMint = amount / tokenPrice;
-
-        // casting to uint128 is safe because we check the upper bound above
-        // forge-lint: disable-next-line(unsafe-typecast)
-        uint128 amount128 = uint128(amount);
-
-        totalRaised = raised + amount128;
-        investments[msg.sender] += amount;
-
-        settlementToken.safeTransferFrom(msg.sender, address(vault), amount);
-        token.mint(msg.sender, tokensToMint);
-
-        rewardDebt[msg.sender] =
-            (IERC20(address(token)).balanceOf(msg.sender) * accRewardPerShare) /
-            PRECISION;
-        emit Invested(msg.sender, amount, tokensToMint);
+    if (pendingRewards > 0) {
+      vault.release(address(settlementToken), msg.sender, pendingRewards);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            FINALIZE
-    //////////////////////////////////////////////////////////////*/
+    token.mint(msg.sender, tokensToMint);
 
-    /**
-     * @notice Finalizes successful sale, deducts fees and distributes to creator.
-     * @dev Only callable by governance when sale is successful.
-     */
-    function finalizeSale() external nonReentrant {
-        if (msg.sender != governance) revert Unauthorized();
-        if (state() != State.Successful || saleFinalized) revert InvalidState();
+    uint256 newBalance = IERC20(address(token)).balanceOf(msg.sender);
+    rewardDebt[msg.sender] = (newBalance * accRewardPerShare) / PRECISION;
 
-        saleFinalized = true;
+    emit Invested(msg.sender, amount, tokensToMint);
+  }
 
-        // Activar vault antes de liberar fondos
-        vault.activate();
+  /*//////////////////////////////////////////////////////////////
+                          FINALIZE
+  //////////////////////////////////////////////////////////////*/
 
-        uint256 balance = totalRaised;
+  function finalizeSale() external nonReentrant {
+    if (msg.sender != governance) revert Unauthorized();
+    if (state() != State.Successful || saleFinalized) revert InvalidState();
+    if (totalRaised < minimumCap) revert BelowMinimumCap();
 
-        (uint256 fee, uint256 net) = feeManager.calculateFee(
-            MODULE_ID,
-            balance
-        );
+    saleFinalized = true;
 
-        address treasury = feeManager.feeTreasury();
-        if (treasury == address(0)) revert Unauthorized();
+    uint256 balance = vault.totalBalance(address(settlementToken));
+    if (balance < totalRaised) revert InvalidState();
 
-        vault.release(address(settlementToken), treasury, fee);
-        vault.release(address(settlementToken), projectCreator, net);
+    (uint256 fee, uint256 net) = feeManager.calculateFee(MODULE_ID, balance);
+    address treasury = feeManager.feeTreasury();
 
-        emit SaleFinalized();
+    if (treasury == address(0)) revert Unauthorized();
+
+    vault.release(address(settlementToken), treasury, fee);
+    vault.release(address(settlementToken), projectCreator, net);
+    emit SaleFinalized();
+  }
+
+  /*//////////////////////////////////////////////////////////////
+                              REFUND
+  //////////////////////////////////////////////////////////////*/
+
+  function refund() external nonReentrant {
+    if (state() != State.Failed) revert InvalidState();
+
+    uint256 invested = investments[msg.sender];
+    if (invested == 0) revert NothingToClaim();
+
+    investments[msg.sender] = 0;
+
+    uint256 bal = IERC20(address(token)).balanceOf(msg.sender);
+    if (bal > 0) {
+      token.burn(msg.sender, bal);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                                REFUND
-    //////////////////////////////////////////////////////////////*/
+    vault.releaseOnClose(address(settlementToken), msg.sender, invested);
+    emit Refunded(msg.sender, invested);
+  }
 
-    /**
-     * @notice Claims refund when sale fails. Burns tokens and returns funds.
-     */
-    function refund() external nonReentrant {
-        if (state() != State.Failed) revert InvalidState();
+  /*//////////////////////////////////////////////////////////////
+                      REWARD DISTRIBUTION
+  //////////////////////////////////////////////////////////////*/
 
-        uint256 invested = investments[msg.sender];
-        if (invested == 0) revert NothingToClaim();
+  function depositRevenue(uint256 amount) external nonReentrant whenVaultOperational {
+    if (state() != State.Successful) revert InvalidState();
+    if (!saleFinalized) revert InvalidState();
+    if (amount == 0) revert ZeroAmount();
 
-        investments[msg.sender] = 0;
+    vault.depositFrom(msg.sender, address(settlementToken), amount);
+    pendingRevenue += amount;
 
-        // Cerrar vault si aún no está cerrado
-        if (vault.state() != IProjectVault.VaultState.Closed) {
-            vault.close();
-        }
+    emit RevenueDeposited(amount);
+  }
 
-        uint256 bal = IERC20(address(token)).balanceOf(msg.sender);
-        if (bal > 0) {
-            token.burn(msg.sender, bal);
-        }
+  function claim() external nonReentrant whenVaultOperational {
+    if (!saleFinalized) revert InvalidState();
+    if (block.timestamp > distributionEnd) revert DistributionEnded();
 
-        vault.releaseOnClose(address(settlementToken), msg.sender, invested);
+    uint256 balance = IERC20(address(token)).balanceOf(msg.sender);
+    updatePool();
+    uint256 accumulated = (balance * accRewardPerShare) / PRECISION;
+    uint256 debt = rewardDebt[msg.sender];
 
-        emit Refunded(msg.sender, invested);
+    if (accumulated <= debt) revert NothingToClaim();
+
+    uint256 claimable = accumulated - debt;
+    rewardDebt[msg.sender] = accumulated;
+
+    vault.release(address(settlementToken), msg.sender, claimable);
+    emit Claimed(msg.sender, claimable);
+  }
+
+  function pending(address user) external view override returns (uint256) {
+    uint256 _acc = accRewardPerShare;
+    uint256 supply = IERC20(address(token)).totalSupply();
+
+    if (supply > 0) {
+      // casting to 'uint128' is safe because the maximum value of 'pendingRevenue' is limited by the total amount deposited, which cannot exceed 'fundingTarget' (a 'uint128'), and 'supply' is at least 1, so the result of '(pendingRevenue * PRECISION) / supply' will always fit within 'uint128'
+      // forge-lint: disable-next-line(unsafe-typecast)
+      _acc += uint128((pendingRevenue * PRECISION) / supply);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        REWARD DISTRIBUTION
-    //////////////////////////////////////////////////////////////*/
+    uint256 balance = IERC20(address(token)).balanceOf(user);
+    uint256 accumulated = (balance * _acc) / PRECISION;
+    uint256 debt = rewardDebt[user];
 
-    /**
-     * @notice Deposits revenue for distribution to token holders.
-     * @dev Updates accRewardPerShare based on total supply.
-     */
-    function depositRevenue(uint256 amount) external nonReentrant {
-        if (state() != State.Successful) revert InvalidState();
-        if (amount == 0) revert ZeroAmount();
+    return accumulated <= debt ? 0 : accumulated - debt;
+  }
 
-        settlementToken.safeTransferFrom(msg.sender, address(this), amount);
+  /*//////////////////////////////////////////////////////////////
+                      TOKEN HOOK
+  //////////////////////////////////////////////////////////////*/
 
-        uint256 supply = IERC20(address(token)).totalSupply();
-        if (supply != 0) {
-            uint256 rewardIncrement = (amount * PRECISION) / supply;
-            if (rewardIncrement > type(uint128).max) revert InvalidState();
+  function beforeTokenTransfer(address from, address to, uint256 amount) external override {
+    if (msg.sender != address(token)) revert Unauthorized();
+    updatePool();
+    uint256 acc = accRewardPerShare;
+    IERC20 t = IERC20(address(token));
 
-            // casting to uint128 is safe because rewardIncrement is bounded above
-            // forge-lint: disable-next-line(unsafe-typecast)
-            accRewardPerShare += uint128(rewardIncrement);
-        }
-
-        emit RevenueDeposited(amount);
+    if (from != address(0)) {
+      uint256 balanceBefore = t.balanceOf(from);
+      uint256 accumulated = (balanceBefore * acc) / PRECISION;
+      uint256 pendingRewards = accumulated > rewardDebt[from] ? accumulated - rewardDebt[from] : 0;
+      uint256 newBalance = balanceBefore - amount;
+      uint256 newAccumulated = (newBalance * acc) / PRECISION;
+      rewardDebt[from] = newAccumulated > pendingRewards ? newAccumulated - pendingRewards : 0;
     }
 
-    /**
-     * @notice Claims accumulated rewards for msg.sender.
-     */
-    function claim() external nonReentrant {
-        if (block.timestamp > distributionEnd) revert DistributionEnded();
+    if (to != address(0)) {
+      uint256 balanceBefore = t.balanceOf(to);
+      uint256 accumulated = (balanceBefore * acc) / PRECISION;
+      uint256 pendingRewards = accumulated > rewardDebt[to] ? accumulated - rewardDebt[to] : 0;
+      uint256 newBalance = balanceBefore + amount;
+      rewardDebt[to] = ((newBalance * acc) / PRECISION) - pendingRewards;
+    }
+  }
 
-        uint256 balance = IERC20(address(token)).balanceOf(msg.sender);
-        uint256 accumulated = (balance * accRewardPerShare) / PRECISION;
-        uint256 debt = rewardDebt[msg.sender];
+  function updatePool() public {
+    uint256 _pending = pendingRevenue;
+    if (_pending == 0) return;
 
-        if (accumulated <= debt) revert NothingToClaim();
+    uint256 supply = IERC20(address(token)).totalSupply();
+    if (supply == 0) return;
 
-        uint256 claimable = accumulated - debt;
-        rewardDebt[msg.sender] = accumulated;
+    uint256 increment = (_pending * PRECISION) / supply;
+    if (increment > type(uint128).max) revert InvalidState();
 
-        settlementToken.safeTransfer(msg.sender, claimable);
-        emit Claimed(msg.sender, claimable);
+    // casting to 'uint128' is safe because the maximum value of 'increment' is limited by the total amount deposited, which cannot exceed 'fundingTarget' (a 'uint128'), and 'supply' is at least 1, so the result of '(_pending * PRECISION) / supply' will always fit within 'uint128'
+    // forge-lint: disable-next-line(unsafe-typecast)
+    accRewardPerShare += uint128(increment);
+    pendingRevenue = 0;
+  }
+
+  function finalizeFailure() external nonReentrant {
+    if (state() != State.Failed) revert InvalidState();
+    if (block.timestamp < saleEnd) revert InvalidState();
+    if (msg.sender != governance) revert Unauthorized();
+
+    if (vault.state() != IProjectVault.VaultState.Closed) {
+      vault.close();
     }
 
-    function pending(address user) external view override returns (uint256) {
-        uint256 balance = IERC20(address(token)).balanceOf(user);
-        uint256 accumulated = (balance * accRewardPerShare) / PRECISION;
-        uint256 debt = rewardDebt[user];
-        return accumulated <= debt ? 0 : accumulated - debt;
-    }
+    emit SaleFailed();
+  }
 
-    /*//////////////////////////////////////////////////////////////
-                        TOKEN HOOK
-    //////////////////////////////////////////////////////////////*/
+  function isStakeholder(address user) external view override returns (bool) {
+    return token.balanceOf(user) > 0;
+  }
 
-    /**
-     * @dev Updates reward debt on transfers to maintain accrual integrity.
-     */
-    function beforeTokenTransfer(
-        address from,
-        address to,
-        uint256
-    ) external override {
-        if (msg.sender != address(token)) revert Unauthorized();
-
-        uint256 acc = accRewardPerShare;
-        if (from != address(0)) {
-            rewardDebt[from] =
-                (IERC20(address(token)).balanceOf(from) * acc) /
-                PRECISION;
-        }
-        if (to != address(0)) {
-            rewardDebt[to] =
-                (IERC20(address(token)).balanceOf(to) * acc) /
-                PRECISION;
-        }
-    }
+  function getMaxInvestable(uint256 amount) external view override returns (uint256 validAmount, uint256 remainder) {
+    uint256 price = tokenPrice;
+    if (price == 0) return (0, amount);
+    remainder = amount % price;
+    validAmount = amount - remainder;
+  }
 }
