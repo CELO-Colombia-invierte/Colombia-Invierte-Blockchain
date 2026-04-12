@@ -7,61 +7,56 @@ pragma solidity ^0.8.30;
  * @author Key Lab Technical Team.
  */
 interface IMilestonesModule {
-    enum MilestoneStatus {
-        None,
-        Proposed,
-        Approved,
-        Executed
-    }
+  enum MilestoneStatus {
+    None,
+    Proposed,
+    Approved,
+    Executed
+  }
 
-    struct Milestone {
-        bytes32 descriptionHash;
-        address token;
-        address recipient;
-        uint256 amount;
-        MilestoneStatus status;
-    }
+  struct Milestone {
+    bytes32 descriptionHash;
+    address token;
+    address recipient;
+    uint256 amount;
+    MilestoneStatus status;
+  }
 
-    event MilestonesInitialized(
-        address indexed vault,
-        address indexed governance
-    );
-    event MilestoneProposed(
-        uint256 indexed id,
-        address indexed proposer,
-        address token,
-        address recipient,
-        uint256 amount,
-        string description
-    );
-    event MilestoneApproved(uint256 indexed id);
-    event MilestoneExecuted(uint256 indexed id);
+  error ZeroAddress();
+  error ZeroAmount();
+  error Unauthorized();
+  error InvalidMilestone();
+  error InvalidState();
+  error VaultPaused();
+  error InvalidVaultState();
+  error FundingNotFinalized();
+  error InsufficientAvailableFunds();
+  error InvalidToken();
 
-    function initialize(address vault_, address governance_) external;
+  event MilestonesInitialized(address indexed vault, address indexed governance);
+  event MilestoneProposed(
+    uint256 indexed id, address indexed proposer, address token, address recipient, uint256 amount, string description
+  );
+  event MilestoneApproved(uint256 indexed id);
+  event MilestoneExecuted(uint256 indexed id);
 
-    function proposeMilestone(
-        string calldata description,
-        address token,
-        address recipient,
-        uint256 amount
-    ) external returns (uint256);
+  function initialize(address vault_, address governance_, address revenue_) external;
 
-    function approveMilestone(uint256 id) external;
+  function proposeMilestone(
+    string calldata description,
+    address token,
+    address recipient,
+    uint256 amount
+  ) external returns (uint256);
 
-    function executeMilestone(uint256 id) external;
+  function approveMilestone(uint256 id) external;
 
-    function milestoneCount() external view returns (uint256);
+  function executeMilestone(uint256 id) external;
 
-    function milestones(
-        uint256 id
-    )
-        external
-        view
-        returns (
-            bytes32 descriptionHash,
-            address token,
-            address recipient,
-            uint256 amount,
-            MilestoneStatus status
-        );
+  function milestoneCount() external view returns (uint256);
+
+  function milestones(uint256 id)
+    external
+    view
+    returns (bytes32 descriptionHash, address token, address recipient, uint256 amount, MilestoneStatus status);
 }

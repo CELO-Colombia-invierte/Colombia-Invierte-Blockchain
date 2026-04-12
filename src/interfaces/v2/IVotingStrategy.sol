@@ -7,10 +7,7 @@ pragma solidity ^0.8.30;
  * @author Key Lab Technical Team.
  */
 interface IVotingStrategy {
-    error ZeroAddress();
+  error ZeroAddress();
 
-    function getVotingPower(
-        address user,
-        uint256 snapshotBlock
-    ) external view returns (uint256);
+  function getVotingPower(address user, uint256 snapshotBlock) external view returns (uint256);
 }

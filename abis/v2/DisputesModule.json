@@ -1,5 +1,10 @@
 [
   {
+    "type": "constructor",
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "function",
     "name": "disputeCount",
     "inputs": [],
@@ -41,7 +46,7 @@
       {
         "name": "status",
         "type": "uint8",
-        "internalType": "enum DisputesModule.DisputeStatus"
+        "internalType": "enum IDisputesModule.DisputeStatus"
       }
     ],
     "stateMutability": "view"
@@ -72,6 +77,19 @@
         "name": "governance_",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "markFrozen",
+    "inputs": [
+      {
+        "name": "disputeId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -196,6 +214,16 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AlreadyProcessed",
+    "inputs": []
   },
   {
     "type": "error",
