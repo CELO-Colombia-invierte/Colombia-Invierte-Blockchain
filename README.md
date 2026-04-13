@@ -8,15 +8,16 @@ MVP V2 is the modular evolution of the Colombia Invierte protocol.
 
 Unlike MVP V1 (monolithic), V2 introduces:
 
-- Per-project isolated custody
+- Per-project isolated custody (Vaults)
 - Modular financial logic
-- On-chain governance and disputes
+- On-chain governance and explicit dispute state machines
 - Dual investment models with equal importance:
 
-  - Tokenization (ERC20 + revenue distribution)
-  - Natillera (collective savings cycles)
+  - **Tokenization** (ERC20 + revenue distribution)
 
-This version is architected for production-readiness while keeping clarity and composability as first-class priorities.
+  - **Natillera** (Collective savings cycles)
+
+This version is architected for production-readiness while keeping clarity, economic security, and composability as first-class priorities.
 
 ---
 
@@ -29,17 +30,14 @@ Core flow:
 ```
 PlatformV2 (Factory)
         │
-        ├── ProjectVault (Custody)
-        ├── RevenueModuleV2 (Tokenization model)
-        ├── NatilleraV2 (Savings model)
+        ├── ProjectVault (Custody - Source of Truth)
+        ├── RevenueModuleV2 / NatilleraV2 (Financial Logic)
         ├── MilestonesModule (Optional, Tokenization)
-        ├── GovernanceModule
-        └── DisputesModule
+        ├── GovernanceModule (Execution & Consensus)
+        └── DisputesModule (Emergency & Freeze)
 ```
 
-No funds are ever stored in the factory.
-
-Every project has its own Vault and dedicated modules.
+No funds are ever stored in the factory. Every project has its own Vault and dedicated modules.
 
 ---
 
@@ -53,16 +51,21 @@ Flow:
 
 - Investor approves stablecoin
 - Calls `invest()` on RevenueModuleV2
-- Funds go to ProjectVault
+- Funds go to ProjectVault (Strict multiple validation prevents dust loss).
 - Tokens are minted proportionally
-- Revenue can later be deposited and claimed
+- Revenue can later be deposited and claimed via MasterChef-style accounting (O(1) complexity).
+
+Governance: Uses RevenueVoting (1 Token = 1 Vote) based on ERC20Votes.
 
 Components:
 
 - `ProjectTokenV2`
 - `RevenueModuleV2`
 - `ProjectVault`
-- `MilestonesModule` (optional)
+- `MilestonesModule`
+- `GovernanceModule`
+- `DisputesModule`
+- `RevenueVoting`
 
 ---
 
@@ -75,14 +78,18 @@ Flow:
 - Member joins via `join()`
 - Pays monthly quotas via `payQuota(monthId)`
 - Late payments may include penalties
-- After cycle completion and Vault closure:
+- Yield Generation: Governance can propose a Disbursement to invest funds off-chain. Returns are injected back via `returnYield()`.
+- After cycle completion, fees are settled and members withdraw their proportional share + yields.
 
-  - Members withdraw their proportional share
+Governance: Uses NatilleraVoting (1 Member = 1 Vote) for democratic consensus.
 
 Components:
 
 - `NatilleraV2`
 - `ProjectVault`
+- `GovernanceModule`
+- `DisputesModule`
+- `NatilleraVoting`
 
 Natillera does not mint ERC20 tokens.
 
@@ -92,7 +99,9 @@ Natillera does not mint ERC20 tokens.
 
 ## PlatformV2
 
-Factory contract responsible for:
+Factory contract responsible for creating new projects and wiring access control. Once deployed, the factory revokes its own admin rights, ensuring true decentralization.
+
+Responsibilities:
 
 - Creating new projects
 - Deploying isolated modules
@@ -104,7 +113,7 @@ It holds no user funds.
 
 ## ProjectVault
 
-Per-project custody contract.
+Per-project custody contract. Holds all funds, enforces state transitions, and protects minimum reserves for protocol fees.
 
 Responsibilities:
 
@@ -151,9 +160,9 @@ Used to:
 
 ---
 
-## GovernanceModule
+## GovernanceModule & Voting Strategies
 
-Minimal on-chain governance layer.
+Minimal on-chain governance layer. Uses immutable parameter snapshots (endTime, quorum) to prevent temporal manipulation during active votes. Supports milestones, disbursements, and parameter updates.
 
 Supports:
 
@@ -165,20 +174,19 @@ Supports:
 
 ## DisputesModule
 
-Emergency and conflict resolution module.
+Emergency and conflict resolution module. Uses an explicit state machine (activeDisputeId) interacting with the Vault to freeze funds and prevent Guardian overriding.
 
 Supports:
 
 - Opening disputes
-- Pausing project logic
 - Resolving and resuming operations
 
 ---
 
 ## FeeManager & FeeTreasury
 
-- FeeManager: Calculates and routes protocol fees
-- FeeTreasury: Receives protocol-level fees
+- FeeManager: Dynamically calculates and routes protocol fees (e.g., 30% Tokenization, 3% Natillera).
+- FeeTreasury: Secure receiver for protocol-level fees.
 
 Project funds remain isolated in their Vault.
 
@@ -191,38 +199,38 @@ Project funds remain isolated in their Vault.
 ### Core Contracts
 
 PlatformV2:
-`0xd6BA650Fb9426508707E77e8fb58037B39723F69`
+`0x35f7CA6a328cECef2984fbF933c4D01d2632c4a6`
 
 FeeManager:
-`0x36e23fE797F04C5197A713B29508C80b5b9f25aa`
+`0x6F30Fd58E539949D34ba68374D150Fb86104071C`
 
 FeeTreasury:
-`0x8392dD63883Fc5566e54B3431E35bA100D10Ae86`
+`0x3aa898F6B1530B45Ed785F9C5CdB626dfF03682d`
 
 ---
 
 ### Implementations (Reference / ABI Extraction)
 
 ProjectVault Impl:
-`0x5057e98c1fbe4356f45d3aB6DEb500a544b547c9`
+`0x0A823B0af40380A13bba5851A501672D9Ef7aF74`
 
 ProjectTokenV2 Impl:
-`0x0F7F23226666E8DF6E170933A0082B5c6774Aeb3`
+`0xE233D5dF4e8A93e885674A81401e5C165577D45b`
 
 RevenueModuleV2 Impl:
-`0x1e29a3952EB6cE8919B8925807DBfE0f4dAB4cd4`
+`0x17f2CED2Be89175BE194FcC0F006e9f54f39b4d7`
 
 NatilleraV2 Impl:
-`0xC9A8e53168e6Aed3d1Ded5CBC756F84f834771Fd`
+`0x42ae916Ee9F4bD3bb9767fE6AF9579CB5F19324b`
 
 MilestonesModule Impl:
-`0x840DBE5f1D117b8806C92C77131691DbCB83e043`
+`0x5A83256310F2853cF435D55d188a5501025e1cfB`
 
 GovernanceModule Impl:
-`0x604b58C93a02D49a8f603F8AF086F8b9E3727839`
+`0x430f467bb254Cd356BE06cFB7581d1Ef69f1fBC5`
 
 DisputesModule Impl:
-`0x092A096E486504B678e904537455c31f0fBdd413`
+`0x617Fea7bf726741166B5609239ef952293118a15`
 
 ---
 
@@ -270,45 +278,31 @@ forge test --gas-report
 
 # Security Principles
 
-- Isolated custody per project
-- No funds in factory
-- Explicit state transitions
-- Event-driven indexing
-- Emergency dispute mechanism
-- Refund path for failed funding (Tokenization)
+- Least Privilege Access: Strict CONTROLLER_ROLE and GUARDIAN_ROLE enforcement.
+- Explicit State Machines: No ambiguous pause states during disputes.
+- Temporal Immutability: Proposals lock their governance parameters upon creation.
+- Precision Loss Prevention: Strict modulo checks on investments.
+- Event-Driven Indexing: Full off-chain traceability via granular events.
 
 ---
 
 # Backend & Frontend Integration
 
-V2 is event-driven.
+V2 is fully dynamic and event-driven.
 
 Backend must:
 
-- Listen to `ProjectCreated`
-- Store module addresses per project
-- Dynamically instantiate contracts
+- Listen to ProjectCreated, dynamically instantiate cloned contracts, and map descriptionHash to off-chain IPFS/DB data.
 
 Frontend must:
 
-- Never hardcode project module addresses
-- Fetch them from backend
-- Use BigInt for all monetary values
+- Never hardcode module addresses. Fetch them from the backend and use BigInt for all EVM interactions.
 
 ---
 
 # Disclaimer
 
-This deployment is currently on Celo Sepolia testnet.
-
-Mainnet deployment will require:
-
-- Final security review
-- Permission verification
-- Economic simulation validation
-- Multisig administration setup
-
-Use at your own risk.
+This deployment is currently on Celo Sepolia testnet. Mainnet deployment will require a final security review, multisig administration setup, and real-world economic simulation validation. Use at your own risk.
 
 ---
 
