@@ -19,13 +19,10 @@ contract NatilleraE2E is BaseSetup {
     vm.prank(creator);
     uint256 id = platform.createNatilleraProject(address(usdc), QUOTA, 12, 10);
 
-    (address vaultAddr, address modAddr,,, address govAddr,,) = platform.projects(id);
+    (address vaultAddr, address modAddr,,,,,) = platform.projects(id);
 
     vault = ProjectVault(vaultAddr);
     natillera = NatilleraV2(modAddr);
-
-    vm.prank(govAddr);
-    vault.activate();
   }
 
   function test_FullNatilleraLifecycleWithYield() public {

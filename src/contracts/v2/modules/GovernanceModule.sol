@@ -19,7 +19,7 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
   uint256 public votingPeriod;
   uint256 public quorumPercent;
 
-  uint256 public constant MIN_VOTING_PERIOD = 1 days;
+  uint256 public constant MIN_VOTING_PERIOD = 1 minutes;
   uint256 public constant MAX_VOTING_PERIOD = 30 days;
   uint256 public constant MIN_QUORUM = 10;
   uint256 public constant MAX_QUORUM = 100;
@@ -67,7 +67,7 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
     votingStrategy = votingStrategy_;
     disputes = disputes_;
 
-    votingPeriod = 3 days;
+    votingPeriod = 1 minutes;
     quorumPercent = 60;
 
     emit GovernanceInitialized(vault_);

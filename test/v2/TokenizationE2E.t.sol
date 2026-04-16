@@ -30,9 +30,6 @@ contract TokenizationE2E is BaseSetup {
     revenue = RevenueModuleV2(modAddr);
     token = ProjectTokenV2(tokenAddr);
     gov = GovernanceModule(govAddr);
-
-    vm.prank(address(gov));
-    vault.activate();
   }
 
   /**

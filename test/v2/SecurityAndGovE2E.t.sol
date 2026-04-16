@@ -28,9 +28,6 @@ contract SecurityAndGovE2E is BaseSetup {
     natillera = NatilleraV2(modAddr);
     gov = GovernanceModule(govAddr);
     disputes = DisputesModule(dispAddr);
-
-    vm.prank(govAddr);
-    vault.activate();
   }
 
   /**

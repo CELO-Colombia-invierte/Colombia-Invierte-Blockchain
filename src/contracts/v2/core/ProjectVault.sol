@@ -70,7 +70,7 @@ contract ProjectVault is
     _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
     project = project_;
-    state = VaultState.Locked;
+    state = VaultState.Active;
     model = _model;
 
     _grantRole(GUARDIAN_ROLE, guardian_);
@@ -79,6 +79,7 @@ contract ProjectVault is
     isTokenAllowed[allowedToken_] = true;
     emit VaultInitialized(project_, governance_);
     emit TokenAllowed(allowedToken_, true);
+    emit Activated();
   }
 
   /*//////////////////////////////////////////////////////////////
