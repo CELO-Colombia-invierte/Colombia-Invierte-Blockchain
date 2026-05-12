@@ -21,4 +21,8 @@ contract RevenueVoting is IVotingStrategy {
   function getVotingPower(address user, uint256 snapshotBlock) external view returns (uint256) {
     return token.getPastVotes(user, snapshotBlock);
   }
+
+  function getTotalSupply(uint256 blockNumber) external view returns (uint256) {
+    return token.getPastTotalSupply(blockNumber);
+  }
 }

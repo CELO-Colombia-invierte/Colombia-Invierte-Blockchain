@@ -127,6 +127,16 @@ contract ProjectTokenV2 is
     return super.getPastVotes(account, blockNumber);
   }
 
+  function getPastTotalSupply(uint256 timepoint)
+    public
+    view
+    virtual
+    override(VotesUpgradeable, IProjectTokenV2)
+    returns (uint256)
+  {
+    return super.getPastTotalSupply(timepoint);
+  }
+
   /*//////////////////////////////////////////////////////////////
                               VIEWERS
   //////////////////////////////////////////////////////////////*/

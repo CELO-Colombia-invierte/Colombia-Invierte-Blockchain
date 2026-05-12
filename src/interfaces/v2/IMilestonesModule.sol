@@ -11,7 +11,8 @@ interface IMilestonesModule {
     None,
     Proposed,
     Approved,
-    Executed
+    Executed,
+    Cancelled
   }
 
   struct Milestone {
@@ -37,10 +38,10 @@ interface IMilestonesModule {
   event MilestoneProposed(
     uint256 indexed id, address indexed proposer, address token, address recipient, uint256 amount, string description
   );
-  event MilestoneApproved(uint256 indexed id);
   event MilestoneExecuted(uint256 indexed id);
+  event MilestoneCancelled(uint256 indexed id);
 
-  function initialize(address vault_, address governance_, address revenue_) external;
+  function initialize(address vault_, address governance_, address projectCreator_, address revenue_) external;
 
   function proposeMilestone(
     string calldata description,
@@ -49,9 +50,9 @@ interface IMilestonesModule {
     uint256 amount
   ) external returns (uint256);
 
-  function approveMilestone(uint256 id) external;
-
   function executeMilestone(uint256 id) external;
+
+  function cancelMilestone(uint256 id) external;
 
   function milestoneCount() external view returns (uint256);
 

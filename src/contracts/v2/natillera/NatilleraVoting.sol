@@ -21,4 +21,8 @@ contract NatilleraVoting is IVotingStrategy {
   function getVotingPower(address user, uint256) external view returns (uint256) {
     return natillera.isMember(user) ? 1 : 0;
   }
+
+  function getTotalSupply(uint256) external view returns (uint256) {
+    return natillera.memberCount();
+  }
 }

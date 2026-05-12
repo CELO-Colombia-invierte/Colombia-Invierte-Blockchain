@@ -85,11 +85,11 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
     address token,
     string calldata description
   ) external returns (uint256 id) {
-    if ((action == Action.ApproveMilestone || action == Action.ExecuteMilestone) && milestones == address(0)) revert InvalidProposal();
+    if (action == Action.ApproveAndExecuteMilestone && milestones == address(0)) revert InvalidProposal();
 
     if (action == Action.Disbursement) {
       if (targetId != 0) revert InvalidDisbursement();
-    } else if (action == Action.ApproveMilestone || action == Action.ExecuteMilestone) {
+    } else if (action == Action.ApproveAndExecuteMilestone) {
       if (targetId == 0) revert InvalidProposal();
     }
 
@@ -166,14 +166,36 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
     if (vault == address(0)) revert InvalidProposal();
 
     uint256 totalVotes = p.yesVotes + p.noVotes;
-    if (totalVotes == 0) revert QuorumNotReached();
+    uint256 supplyAtSnapshot = IVotingStrategy(votingStrategy).getTotalSupply(p.snapshotBlock);
 
-    uint256 yesPercent = (p.yesVotes * 100) / totalVotes;
-    if (yesPercent < p.snapshotQuorum) revert QuorumNotReached();
+    // 1. Verificar si se alcanzó el Quórum de participación
+    uint256 participation = supplyAtSnapshot == 0 ? 0 : (totalVotes * 100) / supplyAtSnapshot;
+    bool quorumReached = participation >= p.snapshotQuorum;
+    // 2. Verificar si ganó el SÍ (Debe ser estrictamente mayor que el NO)
+    bool proposalWon = p.yesVotes > p.noVotes;
+
+    // La propuesta pasa solo si hay quórum Y ganó el SÍ
+    bool passed = quorumReached && proposalWon;
 
     p.executed = true;
-    _executeAction(p);
-    emit ProposalExecuted(id, p.action);
+
+    if (passed) {
+      _executeAction(p);
+      emit ProposalExecuted(id, p.action);
+    } else {
+      // INTEGRACIÓN AUTOMÁTICA:
+      // Si la propuesta era para un Hito y NO pasó, llamamos automáticamente a cancelMilestone
+      if (p.action == Action.ApproveAndExecuteMilestone) {
+        if (milestones != address(0)) {
+          IMilestonesModule(milestones).cancelMilestone(p.targetId);
+        }
+        emit ProposalRejected(id, p.action);
+      } else {
+        // Para otras acciones (como UpdateQuorum), simplemente revertimos si no pasó
+        if (!quorumReached) revert QuorumNotReached();
+        revert ProposalNotPassed();
+      }
+    }
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -187,7 +209,7 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
       if (v.paused()) revert VaultPaused();
     }
 
-    if (p.action == Action.Disbursement || p.action == Action.ExecuteMilestone) {
+    if (p.action == Action.Disbursement || p.action == Action.ApproveAndExecuteMilestone) {
       if (v.state() != IProjectVault.VaultState.Active) {
         revert InvalidVaultState();
       }
@@ -206,12 +228,12 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
       } else {
         v.unpause();
       }
-    } else if (p.action == Action.ApproveMilestone) {
-      if (milestones == address(0)) revert InvalidProposal();
-      IMilestonesModule(milestones).approveMilestone(p.targetId);
-    } else if (p.action == Action.ExecuteMilestone) {
+    } else if (p.action == Action.ApproveAndExecuteMilestone) {
       if (milestones == address(0)) revert InvalidProposal();
       IMilestonesModule(milestones).executeMilestone(p.targetId);
+    } else if (p.action == Action.CancelMilestone) {
+      if (milestones == address(0)) revert InvalidProposal();
+      IMilestonesModule(milestones).cancelMilestone(p.targetId);
     } else if (p.action == Action.Disbursement) {
       if (!v.isTokenAllowed(p.token)) revert InvalidDisbursement();
       v.release(p.token, p.recipient, p.amount);

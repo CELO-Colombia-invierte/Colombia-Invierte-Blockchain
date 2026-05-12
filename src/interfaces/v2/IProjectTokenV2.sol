@@ -53,4 +53,6 @@ interface IProjectTokenV2 {
   function totalSupply() external view returns (uint256);
 
   function getPastVotes(address account, uint256 blockNumber) external view returns (uint256);
+
+  function getPastTotalSupply(uint256 blockNumber) external view returns (uint256);
 }

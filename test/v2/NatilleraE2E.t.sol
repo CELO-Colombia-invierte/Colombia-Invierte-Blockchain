@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {BaseSetup, NatilleraV2, ProjectVault} from './BaseSetup.t.sol';
+import {BaseSetup, INatilleraV2, NatilleraV2, ProjectVault} from './BaseSetup.t.sol';
 
 /**
  * @title NatilleraE2E
@@ -68,5 +68,49 @@ contract NatilleraE2E is BaseSetup {
 
     uint256 user1Balance = usdc.balanceOf(user1);
     assertTrue(user1Balance > 100_000e18);
+  }
+
+  /**
+   * @notice Verifica que el sistema cobre la penalidad por mora correctamente.
+   */
+  function test_NatilleraDefaulters_LatePenalty() public {
+    vm.startPrank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    natillera.join();
+    natillera.payQuota(1); // Pago puntual
+    vm.stopPrank();
+
+    // Avanzamos al mes 3 (Ciclo de pago 30 dias. 65 dias = Mes 3)
+    vm.warp(block.timestamp + 65 days);
+
+    vm.startPrank(user1);
+    uint256 balBefore = usdc.balanceOf(user1);
+
+    // El usuario paga la cuota 2 atrasada
+    natillera.payQuota(2);
+    vm.stopPrank();
+
+    uint256 balAfter = usdc.balanceOf(user1);
+    uint256 paidAmount = balBefore - balAfter;
+
+    // La penalidad es 500 bps (5%) de 100 USDC = 5 USDC. Total a debitar: 105 USDC
+    assertEq(paidAmount, 105e18, 'No se cobro la penalidad exacta por mora');
+  }
+
+  /**
+   * @notice Verifica que nadie pueda vaciar la natillera antes de tiempo.
+   */
+  function test_NatilleraEarlyClaimReverts() public {
+    vm.startPrank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    natillera.join();
+    natillera.payQuota(1);
+    vm.stopPrank();
+
+    // Intentamos reclamar antes de la madurez.
+    // Debe fallar por InvalidVaultState ya que claimFinal requiere whenVaultClosed
+    vm.prank(user1);
+    vm.expectRevert(INatilleraV2.InvalidVaultState.selector);
+    natillera.claimFinal();
   }
 }

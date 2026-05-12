@@ -10,4 +10,6 @@ interface IVotingStrategy {
   error ZeroAddress();
 
   function getVotingPower(address user, uint256 snapshotBlock) external view returns (uint256);
+
+  function getTotalSupply(uint256 blockNumber) external view returns (uint256);
 }

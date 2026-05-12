@@ -6,6 +6,7 @@ import {IProjectVault} from '../../../interfaces/v2/IProjectVault.sol';
 import {IRevenueModuleV2} from '../../../interfaces/v2/IRevenueModuleV2.sol';
 import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
 import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import {IAccessControl} from '@openzeppelin/contracts/access/IAccessControl.sol';
 
 /**
  * @title MilestonesModule
@@ -17,6 +18,7 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
   IProjectVault public vault;
   IRevenueModuleV2 public revenue;
   address public governance;
+  address public projectCreator;
   uint256 public override milestoneCount;
   mapping(address => uint256) public totalCommittedByToken;
   mapping(uint256 => Milestone) public override milestones;
@@ -33,13 +35,21 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
                               INITIALIZER
   //////////////////////////////////////////////////////////////*/
 
-  function initialize(address vault_, address governance_, address revenue_) external initializer {
-    if (vault_ == address(0) || governance_ == address(0) || revenue_ == address(0)) revert ZeroAddress();
+  function initialize(
+    address vault_,
+    address governance_,
+    address projectCreator_,
+    address revenue_
+  ) external initializer {
+    if (vault_ == address(0) || governance_ == address(0) || revenue_ == address(0)) {
+      revert ZeroAddress();
+    }
 
     __ReentrancyGuard_init();
 
     vault = IProjectVault(vault_);
     governance = governance_;
+    projectCreator = projectCreator_;
     revenue = IRevenueModuleV2(revenue_);
 
     emit MilestonesInitialized(vault_, governance_);
@@ -78,7 +88,11 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
     address token,
     address recipient,
     uint256 amount
-  ) external override onlyGovernance whenVaultOperational returns (uint256 id) {
+  ) external override whenVaultOperational returns (uint256 id) {
+    // Solo el creador del proyecto o el Admin de la plataforma pueden proponer un milestone.
+    if (msg.sender != projectCreator && !IAccessControl(address(vault)).hasRole(bytes32(0), msg.sender)) {
+      revert Unauthorized();
+    }
     if (!revenue.saleFinalized()) revert FundingNotFinalized();
     if (token == address(0) || recipient == address(0)) {
       revert ZeroAddress();
@@ -105,19 +119,11 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
     emit MilestoneProposed(id, msg.sender, token, recipient, amount, description);
   }
 
-  function approveMilestone(uint256 id) external override onlyGovernance whenVaultOperational {
-    if (id == 0 || id > milestoneCount) revert InvalidMilestone();
-    Milestone storage m = milestones[id];
-    if (m.status != MilestoneStatus.Proposed) revert InvalidState();
-    m.status = MilestoneStatus.Approved;
-    emit MilestoneApproved(id);
-  }
-
   function executeMilestone(uint256 id) external override onlyGovernance nonReentrant whenVaultOperational {
     if (id == 0 || id > milestoneCount) revert InvalidMilestone();
     Milestone storage m = milestones[id];
     if (!revenue.saleFinalized()) revert FundingNotFinalized();
-    if (m.status != MilestoneStatus.Approved) revert InvalidState();
+    if (m.status != MilestoneStatus.Proposed) revert InvalidState();
     if (_availableBalance(m.token) < m.amount) {
       revert InsufficientAvailableFunds();
     }
@@ -126,6 +132,24 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
     totalCommittedByToken[m.token] -= m.amount;
     m.status = MilestoneStatus.Executed;
     emit MilestoneExecuted(id);
+  }
+
+  /**
+   * @notice Cancela un hito propuesto y resta su monto del total comprometido.
+   * @param id El ID del hito a cancelar.
+   */
+  function cancelMilestone(uint256 id) external override onlyGovernance {
+    if (id == 0 || id > milestoneCount) revert InvalidMilestone();
+
+    Milestone storage m = milestones[id];
+
+    if (m.status != MilestoneStatus.Proposed) revert InvalidState();
+
+    totalCommittedByToken[m.token] -= m.amount;
+
+    m.status = MilestoneStatus.Cancelled;
+
+    emit MilestoneCancelled(id);
   }
 
   /*//////////////////////////////////////////////////////////////

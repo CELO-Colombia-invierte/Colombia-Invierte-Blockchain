@@ -2,7 +2,15 @@
 pragma solidity ^0.8.30;
 
 import {IGovernanceModule} from '../../src/interfaces/v2/IGovernanceModule.sol';
-import {BaseSetup, DisputesModule, GovernanceModule, IProjectVault, NatilleraV2, ProjectVault} from './BaseSetup.t.sol';
+import {
+  BaseSetup,
+  DisputesModule,
+  GovernanceModule,
+  IGovernanceModule,
+  IProjectVault,
+  NatilleraV2,
+  ProjectVault
+} from './BaseSetup.t.sol';
 
 /**
  * @title SecurityAndGovE2E
@@ -85,5 +93,70 @@ contract SecurityAndGovE2E is BaseSetup {
 
     assertFalse(vault.paused(), 'Vault should be unpaused');
     assertEq(vault.activeDisputeId(), 0, 'Dispute ID must be cleared');
+  }
+
+  /**
+   * @notice Valida que una propuesta exitosa realmente dispare la accion en el Vault.
+   */
+  function test_GovernanceExecution_Disbursement() public {
+    // 1. Setup: user1 se une a la natillera (Quorum base = 1 miembro)
+    vm.startPrank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    natillera.join();
+    vm.stopPrank();
+
+    // 2. Propuesta para desembolsar 10 USDC al user2
+    vm.prank(user1);
+    uint256 propId =
+      gov.propose(IGovernanceModule.Action.Disbursement, 0, 10e18, user2, address(usdc), 'Pago a proveedor');
+
+    // 3. Votacion
+    vm.prank(user1);
+    gov.vote(propId, IGovernanceModule.Vote.Yes);
+
+    // 4. Warp al final de la votacion
+    (,,, uint256 endTime,,,,,,,,,) = gov.proposals(propId);
+    vm.warp(endTime + 1);
+
+    // Fondeamos el vault para que tenga dinero que desembolsar
+    usdc.mint(address(vault), 50e18);
+    uint256 u2BalBefore = usdc.balanceOf(user2);
+
+    // 5. Ejecucion
+    gov.execute(propId);
+
+    // 6. Validaciones
+    assertEq(usdc.balanceOf(user2) - u2BalBefore, 10e18, 'Los fondos no salieron del Vault');
+    (,,,,,,,,,,,, bool executed) = gov.proposals(propId);
+    assertTrue(executed, 'La propuesta no se marco como ejecutada');
+  }
+
+  /**
+   * @notice Valida el fail-safe: Si no hay quorum, la propuesta es rechazada y el contrato no revierte por error interno.
+   */
+  function test_GovernanceFailsWithoutQuorum() public {
+    // 1. Setup: user1 y user2 se unen (Supply total = 2)
+    vm.prank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    vm.prank(user1);
+    natillera.join();
+
+    vm.prank(user2);
+    usdc.approve(address(vault), type(uint256).max);
+    vm.prank(user2);
+    natillera.join();
+
+    // 2. Propuesta
+    vm.prank(user1);
+    uint256 propId =
+      gov.propose(IGovernanceModule.Action.UpdateVotingPeriod, 0, 2 days, address(0), address(0), 'Update');
+
+    // 3. Nadie vota. Saltamos al final del periodo.
+    (,,, uint256 endTime,,,,,,,,,) = gov.proposals(propId);
+    vm.warp(endTime + 1);
+
+    // 4. Ejecucion deberia fallar por falta de quorum
+    vm.expectRevert(IGovernanceModule.QuorumNotReached.selector);
+    gov.execute(propId);
   }
 }

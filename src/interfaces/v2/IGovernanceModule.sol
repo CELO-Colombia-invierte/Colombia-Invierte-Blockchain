@@ -16,8 +16,8 @@ interface IGovernanceModule {
     CloseVault,
     FreezeFromDispute,
     UnfreezeVault,
-    ApproveMilestone,
-    ExecuteMilestone,
+    ApproveAndExecuteMilestone,
+    CancelMilestone,
     Disbursement,
     UpdateVotingPeriod,
     UpdateQuorum
@@ -64,6 +64,7 @@ interface IGovernanceModule {
   error Unauthorized();
   error VaultPaused();
   error InvalidVaultState();
+  error ProposalNotPassed();
 
   /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -78,6 +79,7 @@ interface IGovernanceModule {
   event DisbursementExecuted(address indexed recipient, address indexed token, uint256 amount);
   event VotingPeriodUpdated(uint256 oldPeriod, uint256 newPeriod);
   event QuorumUpdated(uint256 oldQuorum, uint256 newQuorum);
+  event ProposalRejected(uint256 indexed id, Action action);
 
   /*//////////////////////////////////////////////////////////////
                               CORE

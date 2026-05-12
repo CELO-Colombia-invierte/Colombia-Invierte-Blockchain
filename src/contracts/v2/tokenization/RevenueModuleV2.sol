@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Initializable} from '@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol';
 import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import {IAccessControl} from '@openzeppelin/contracts/access/IAccessControl.sol';
 import {IERC20, SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
 
 import {IFeeManager} from '../../../interfaces/v2/IFeeManager.sol';
@@ -138,14 +139,6 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
     if (raised + amount > fundingTarget) revert FundingTargetReached();
     if (amount > type(uint128).max - raised) revert InvalidState();
 
-    uint256 userBalance = IERC20(address(token)).balanceOf(msg.sender);
-    uint256 accumulated = (userBalance * accRewardPerShare) / PRECISION;
-    uint256 pendingRewards;
-
-    if (accumulated > rewardDebt[msg.sender]) {
-      pendingRewards = accumulated - rewardDebt[msg.sender];
-    }
-
     uint256 tokensToMint = amount / tokenPrice;
     // casting to 'uint128' is safe because we check that 'amount' does not exceed 'fundingTarget' which is a 'uint128'
     // forge-lint: disable-next-line(unsafe-typecast)
@@ -156,14 +149,7 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
 
     vault.depositFrom(msg.sender, address(settlementToken), amount);
 
-    if (pendingRewards > 0) {
-      vault.release(address(settlementToken), msg.sender, pendingRewards);
-    }
-
     token.mint(msg.sender, tokensToMint);
-
-    uint256 newBalance = IERC20(address(token)).balanceOf(msg.sender);
-    rewardDebt[msg.sender] = (newBalance * accRewardPerShare) / PRECISION;
 
     emit Invested(msg.sender, amount, tokensToMint);
   }
@@ -173,7 +159,10 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
   //////////////////////////////////////////////////////////////*/
 
   function finalizeSale() external nonReentrant {
-    if (msg.sender != governance) revert Unauthorized();
+    // Solo el creador del proyecto o el Admin de la plataforma pueden finalizar la venta
+    if (msg.sender != projectCreator && !IAccessControl(address(vault)).hasRole(bytes32(0), msg.sender)) {
+      revert Unauthorized();
+    }
     if (state() != State.Successful || saleFinalized) revert InvalidState();
     if (totalRaised < minimumCap) revert BelowMinimumCap();
 
@@ -276,18 +265,25 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
     if (from != address(0)) {
       uint256 balanceBefore = t.balanceOf(from);
       uint256 accumulated = (balanceBefore * acc) / PRECISION;
-      uint256 pendingRewards = accumulated > rewardDebt[from] ? accumulated - rewardDebt[from] : 0;
-      uint256 newBalance = balanceBefore - amount;
-      uint256 newAccumulated = (newBalance * acc) / PRECISION;
-      rewardDebt[from] = newAccumulated > pendingRewards ? newAccumulated - pendingRewards : 0;
+      uint256 debt = rewardDebt[from];
+      if (accumulated > debt) {
+        uint256 claimable = accumulated - debt;
+        vault.release(address(settlementToken), from, claimable);
+        emit Claimed(from, claimable);
+      }
+      rewardDebt[from] = ((balanceBefore - amount) * acc) / PRECISION;
     }
 
     if (to != address(0)) {
       uint256 balanceBefore = t.balanceOf(to);
       uint256 accumulated = (balanceBefore * acc) / PRECISION;
-      uint256 pendingRewards = accumulated > rewardDebt[to] ? accumulated - rewardDebt[to] : 0;
-      uint256 newBalance = balanceBefore + amount;
-      rewardDebt[to] = ((newBalance * acc) / PRECISION) - pendingRewards;
+      uint256 debt = rewardDebt[to];
+      if (accumulated > debt) {
+        uint256 claimable = accumulated - debt;
+        vault.release(address(settlementToken), to, claimable);
+        emit Claimed(to, claimable);
+      }
+      rewardDebt[to] = ((balanceBefore + amount) * acc) / PRECISION;
     }
   }
 
@@ -310,7 +306,10 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
   function finalizeFailure() external nonReentrant {
     if (state() != State.Failed) revert InvalidState();
     if (block.timestamp < saleEnd) revert InvalidState();
-    if (msg.sender != governance) revert Unauthorized();
+    // Permite al creador o Admin oficializar el fallo para habilitar los reembolsos
+    if (msg.sender != projectCreator && !IAccessControl(address(vault)).hasRole(bytes32(0), msg.sender)) {
+      revert Unauthorized();
+    }
 
     if (vault.state() != IProjectVault.VaultState.Closed) {
       vault.close();

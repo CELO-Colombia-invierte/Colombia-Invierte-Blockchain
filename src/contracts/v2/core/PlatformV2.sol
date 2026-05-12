@@ -161,7 +161,7 @@ contract PlatformV2 {
         })
       );
 
-    IMilestonesModule(milestones).initialize(vault, governance, revenue);
+    IMilestonesModule(milestones).initialize(vault, governance, msg.sender, revenue);
     IGovernanceModule(governance).initialize(vault, milestones, revenueVoting, disputes);
     IDisputesModule(disputes).initialize(vault, governance);
 
