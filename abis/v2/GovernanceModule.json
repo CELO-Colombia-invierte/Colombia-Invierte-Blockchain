@@ -468,6 +468,25 @@
   },
   {
     "type": "event",
+    "name": "ProposalRejected",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "action",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IGovernanceModule.Action"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "QuorumUpdated",
     "inputs": [
       {
@@ -567,6 +586,11 @@
   {
     "type": "error",
     "name": "NotInitializing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotPassed",
     "inputs": []
   },
   {

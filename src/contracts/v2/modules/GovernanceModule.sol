@@ -101,6 +101,9 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
       if (recipient != address(0) || token != address(0)) {
         revert InvalidProposal();
       }
+    } else if (action == Action.ApproveAndExecuteMilestone || action == Action.CancelMilestone) {
+      // Permitir que los hitos pasen validación incluso si llevan datos informativos
+      // La lógica de ejecución usará el targetId para obtener los datos reales del MilestonesModule
     } else {
       if (amount != 0 || recipient != address(0)) {
         revert InvalidDisbursement();
@@ -191,9 +194,7 @@ contract GovernanceModule is Initializable, ReentrancyGuardUpgradeable, IGoverna
         }
         emit ProposalRejected(id, p.action);
       } else {
-        // Para otras acciones (como UpdateQuorum), simplemente revertimos si no pasó
-        if (!quorumReached) revert QuorumNotReached();
-        revert ProposalNotPassed();
+        emit ProposalRejected(id, p.action);
       }
     }
   }

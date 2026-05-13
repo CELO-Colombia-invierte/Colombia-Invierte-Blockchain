@@ -6,7 +6,7 @@
   },
   {
     "type": "function",
-    "name": "approveMilestone",
+    "name": "cancelMilestone",
     "inputs": [
       {
         "name": "id",
@@ -54,6 +54,11 @@
       },
       {
         "name": "governance_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "projectCreator_",
         "type": "address",
         "internalType": "address"
       },
@@ -114,6 +119,19 @@
         "name": "status",
         "type": "uint8",
         "internalType": "enum IMilestonesModule.MilestoneStatus"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "projectCreator",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -186,6 +204,25 @@
   },
   {
     "type": "function",
+    "name": "totalRequestedByToken",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "vault",
     "inputs": [],
     "outputs": [
@@ -212,7 +249,7 @@
   },
   {
     "type": "event",
-    "name": "MilestoneApproved",
+    "name": "MilestoneCancelled",
     "inputs": [
       {
         "name": "id",

@@ -36,6 +36,7 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
   address public projectCreator;
 
   uint256 public pendingRevenue;
+  uint256 public projectFunds;
 
   uint128 public fundingTarget;
   uint128 public minimumCap;
@@ -159,7 +160,6 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
   //////////////////////////////////////////////////////////////*/
 
   function finalizeSale() external nonReentrant {
-    // Solo el creador del proyecto o el Admin de la plataforma pueden finalizar la venta
     if (msg.sender != projectCreator && !IAccessControl(address(vault)).hasRole(bytes32(0), msg.sender)) {
       revert Unauthorized();
     }
@@ -169,15 +169,20 @@ contract RevenueModuleV2 is Initializable, ReentrancyGuardUpgradeable, IRevenueM
     saleFinalized = true;
 
     uint256 balance = vault.totalBalance(address(settlementToken));
-    if (balance < totalRaised) revert InvalidState();
 
-    (uint256 fee, uint256 net) = feeManager.calculateFee(MODULE_ID, balance);
+    // Determinamos la base para el fee: nunca más del totalRaised real
+    uint256 amountToProcess = balance > totalRaised ? totalRaised : balance;
+
+    // Usamos el monto procesado (limpiado de depósitos externos accidentales)
+    (uint256 fee, uint256 net) = feeManager.calculateFee(MODULE_ID, amountToProcess);
+
     address treasury = feeManager.feeTreasury();
-
     if (treasury == address(0)) revert Unauthorized();
 
+    // El presupuesto neto para hitos se basa en lo que queda tras el fee
+    projectFunds = net;
+
     vault.release(address(settlementToken), treasury, fee);
-    vault.release(address(settlementToken), projectCreator, net);
     emit SaleFinalized();
   }
 

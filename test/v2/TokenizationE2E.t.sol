@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IRevenueModuleV2} from '../../src/interfaces/v2/IRevenueModuleV2.sol';
 import {
   BaseSetup,
   GovernanceModule,
+  IGovernanceModule,
+  IMilestonesModule,
   IProjectVault,
+  IRevenueModuleV2,
+  MilestonesModule,
   ProjectTokenV2,
   ProjectVault,
   RevenueModuleV2
@@ -21,6 +24,7 @@ contract TokenizationE2E is BaseSetup {
   ProjectVault public vault;
   ProjectTokenV2 public token;
   GovernanceModule public gov;
+  MilestonesModule public milestones;
 
   uint256 constant TARGET = 10_000e18;
   uint256 constant MIN_CAP = 5000e18;
@@ -31,12 +35,13 @@ contract TokenizationE2E is BaseSetup {
     vm.prank(creator);
     uint256 id = platform.createTokenizationProject(address(usdc), TARGET, MIN_CAP, PRICE, 30 days, 'Token', 'TKN');
 
-    (address vaultAddr, address modAddr, address tokenAddr,, address govAddr,,) = platform.projects(id);
+    (address vaultAddr, address modAddr, address tokenAddr, address msAddr, address govAddr,,) = platform.projects(id);
 
     vault = ProjectVault(vaultAddr);
     revenue = RevenueModuleV2(modAddr);
     token = ProjectTokenV2(tokenAddr);
     gov = GovernanceModule(govAddr);
+    milestones = MilestonesModule(msAddr);
   }
 
   /**
@@ -170,5 +175,118 @@ contract TokenizationE2E is BaseSetup {
     // User3 acaba de recibir los tokens, su yield pendiente historico debe ser 0
     assertEq(revenue.pending(user1), 0, 'Deberia haber reclamado todo');
     assertEq(revenue.pending(user3), 0, 'User3 esta robando yield historico');
+  }
+
+  /**
+   * @notice Valida el flujo completo: Recaudación -> Finalización -> Hito Propuesto -> Votación SÍ -> Desembolso
+   */
+  function test_FullLifecycle_MilestoneSuccess() public {
+    // 1. Inversión (Llegamos al TARGET de 10,000)
+    vm.startPrank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    revenue.invest(5000e18);
+    token.delegate(user1); // Activar poder de voto
+    vm.stopPrank();
+
+    vm.startPrank(user2);
+    usdc.approve(address(vault), type(uint256).max);
+    revenue.invest(5000e18);
+    token.delegate(user2); // Activar poder de voto
+    vm.stopPrank();
+
+    // Avanzar el bloque para que el snapshot (block.number - 1) registre los votos
+    vm.roll(block.number + 1);
+
+    // 2. Finalizar Venta
+    vm.warp(block.timestamp + 31 days);
+    vm.prank(creator);
+    revenue.finalizeSale();
+
+    // 3. Validar contabilidad inicial (Fee del 30% = 3000, Neto = 7000)
+    assertEq(revenue.projectFunds(), 7000e18, 'El neto no se guardo correctamente');
+    assertEq(usdc.balanceOf(address(treasury)), 3000e18, 'El fee no llego al treasury');
+    assertEq(vault.totalBalance(address(usdc)), 7000e18, 'Los fondos netos no estan en el Vault');
+
+    // 4. El creador propone un Hito (Ej: Pago de cimientos)
+    address vendor = address(0x999);
+    vm.prank(creator);
+    uint256 msId = milestones.proposeMilestone('Cimientos', address(usdc), vendor, 2000e18);
+
+    // Validamos que los fondos quedaron comprometidos
+    assertEq(milestones.totalRequestedByToken(address(usdc)), 2000e18);
+
+    // 5. Se crea la propuesta en Gobernanza para aprobar este hito
+    vm.prank(user1);
+    uint256 propId = gov.propose(
+      IGovernanceModule.Action.ApproveAndExecuteMilestone, msId, 0, address(0), address(0), 'Aprobar pago de cimientos'
+    );
+
+    // 6. Los inversores votan SÍ
+    vm.prank(user1);
+    gov.vote(propId, IGovernanceModule.Vote.Yes);
+    vm.prank(user2);
+    gov.vote(propId, IGovernanceModule.Vote.Yes);
+
+    // 7. Pasa el tiempo de votación y se ejecuta
+    (,,, uint256 endTime,,,,,,,,,) = gov.proposals(propId);
+    vm.warp(endTime + 1);
+
+    uint256 vendorBalBefore = usdc.balanceOf(vendor);
+    gov.execute(propId);
+
+    // 8. Validaciones Finales
+    assertEq(usdc.balanceOf(vendor) - vendorBalBefore, 2000e18, 'El proveedor no recibio los fondos');
+
+    (,,,, IMilestonesModule.MilestoneStatus status) = milestones.milestones(msId);
+    assertEq(uint256(status), uint256(IMilestonesModule.MilestoneStatus.Executed), 'El estado del hito no es Executed');
+  }
+
+  /**
+   * @notice Valida el fail-safe: Hito Propuesto -> Votación NO -> Cancelación Automática -> Liberación de Presupuesto
+   */
+  function test_FullLifecycle_MilestoneRejected() public {
+    // 1. Inversión y Finalización
+    vm.startPrank(user1);
+    usdc.approve(address(vault), type(uint256).max);
+    revenue.invest(10_000e18);
+    token.delegate(user1); // Activar poder de voto
+    vm.stopPrank();
+
+    // Avanzar el bloque para el snapshot histórico
+    vm.roll(block.number + 1);
+
+    vm.warp(block.timestamp + 31 days);
+    vm.prank(creator);
+    revenue.finalizeSale();
+
+    // 2. El creador intenta sacar TODO el dinero de una vez (7000e18 neto)
+    vm.prank(creator);
+    uint256 msId = milestones.proposeMilestone('Sacar todo el dinero', address(usdc), address(0x999), 7000e18);
+
+    // 3. Propuesta de Gobernanza
+    vm.prank(user1);
+    uint256 propId = gov.propose(
+      IGovernanceModule.Action.ApproveAndExecuteMilestone, msId, 0, address(0), address(0), 'Intento de vaciar el vault'
+    );
+
+    // 4. La comunidad vota que NO
+    vm.prank(user1);
+    gov.vote(propId, IGovernanceModule.Vote.No);
+
+    // 5. Ejecución (Debe fallar silenciosamente y disparar la cancelación)
+    (,,, uint256 endTime,,,,,,,,,) = gov.proposals(propId);
+    vm.warp(endTime + 1);
+
+    gov.execute(propId);
+
+    // 6. Validaciones Críticas de Seguridad
+    // El presupuesto debe volver a estar libre para futuros hitos correctos
+    assertEq(milestones.totalRequestedByToken(address(usdc)), 0, 'El totalRequested no se libero al rechazar');
+    assertEq(milestones.totalCommittedByToken(address(usdc)), 0, 'El totalCommitted no se libero al rechazar');
+
+    (,,,, IMilestonesModule.MilestoneStatus status) = milestones.milestones(msId);
+    assertEq(
+      uint256(status), uint256(IMilestonesModule.MilestoneStatus.Cancelled), 'El hito no fue marcado como Cancelado'
+    );
   }
 }

@@ -155,8 +155,12 @@ contract SecurityAndGovE2E is BaseSetup {
     (,,, uint256 endTime,,,,,,,,,) = gov.proposals(propId);
     vm.warp(endTime + 1);
 
-    // 4. Ejecucion deberia fallar por falta de quorum
-    vm.expectRevert(IGovernanceModule.QuorumNotReached.selector);
+    // 4. Ejecucion ya NO revierte, sino que rechaza el cambio de estado
     gov.execute(propId);
+
+    // 5. Validamos que el periodo de votacion original (1 minutes) NO se modifico (2 days)
+    (,,,,,,,,,,,, bool executed) = gov.proposals(propId);
+    assertTrue(executed, 'La propuesta debe marcarse como procesada');
+    assertEq(gov.votingPeriod(), 1 minutes, 'El periodo no debio cambiar');
   }
 }

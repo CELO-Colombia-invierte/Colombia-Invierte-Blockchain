@@ -167,6 +167,7 @@ contract PlatformV2 {
 
     IAccessControl(vault).grantRole(CONTROLLER_ROLE, revenue);
     IAccessControl(vault).grantRole(CONTROLLER_ROLE, governance);
+    IAccessControl(vault).grantRole(CONTROLLER_ROLE, milestones);
     IAccessControl(vault).grantRole(GUARDIAN_ROLE, governance);
     IAccessControl(vault).grantRole(GOVERNANCE_ROLE, governance);
     IAccessControl(vault).grantRole(GUARDIAN_ROLE, disputes);

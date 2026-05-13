@@ -21,6 +21,7 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
   address public projectCreator;
   uint256 public override milestoneCount;
   mapping(address => uint256) public totalCommittedByToken;
+  mapping(address => uint256) public totalRequestedByToken;
   mapping(uint256 => Milestone) public override milestones;
 
   /*//////////////////////////////////////////////////////////////
@@ -98,14 +99,16 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
       revert ZeroAddress();
     }
     if (amount == 0) revert ZeroAmount();
-    if (!vault.isTokenAllowed(token)) revert InvalidToken();
+    // El hito debe ser obligatoriamente en la moneda de liquidación
+    if (token != address(revenue.settlementToken())) revert InvalidToken();
 
-    uint256 available = vault.availableBalance(token);
-    uint256 committed = totalCommittedByToken[token];
+    // Validamos contra el presupuesto neto (projectFunds), protegiendo el Yield
+    uint256 budget = revenue.projectFunds();
+    uint256 requested = totalRequestedByToken[token];
 
-    if (committed + amount > available) revert InsufficientAvailableFunds();
-
-    totalCommittedByToken[token] = committed + amount;
+    if (requested + amount > budget) revert InsufficientAvailableFunds();
+    totalRequestedByToken[token] = requested + amount;
+    totalCommittedByToken[token] += amount;
 
     id = ++milestoneCount;
     bytes32 descriptionHash = keccak256(bytes(description));
@@ -124,12 +127,13 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
     Milestone storage m = milestones[id];
     if (!revenue.saleFinalized()) revert FundingNotFinalized();
     if (m.status != MilestoneStatus.Proposed) revert InvalidState();
-    if (_availableBalance(m.token) < m.amount) {
+    if (vault.availableBalance(m.token) < m.amount) {
       revert InsufficientAvailableFunds();
     }
 
     vault.release(m.token, m.recipient, m.amount);
     totalCommittedByToken[m.token] -= m.amount;
+    totalRequestedByToken[m.token] -= m.amount;
     m.status = MilestoneStatus.Executed;
     emit MilestoneExecuted(id);
   }
@@ -146,6 +150,7 @@ contract MilestonesModule is Initializable, ReentrancyGuardUpgradeable, IMilesto
     if (m.status != MilestoneStatus.Proposed) revert InvalidState();
 
     totalCommittedByToken[m.token] -= m.amount;
+    totalRequestedByToken[m.token] -= m.amount;
 
     m.status = MilestoneStatus.Cancelled;
 

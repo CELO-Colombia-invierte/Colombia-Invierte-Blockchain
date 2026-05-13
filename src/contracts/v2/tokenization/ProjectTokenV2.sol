@@ -137,6 +137,10 @@ contract ProjectTokenV2 is
     return super.getPastTotalSupply(timepoint);
   }
 
+  function delegate(address delegatee) public virtual override(VotesUpgradeable, IProjectTokenV2) {
+    super.delegate(delegatee);
+  }
+
   /*//////////////////////////////////////////////////////////////
                               VIEWERS
   //////////////////////////////////////////////////////////////*/

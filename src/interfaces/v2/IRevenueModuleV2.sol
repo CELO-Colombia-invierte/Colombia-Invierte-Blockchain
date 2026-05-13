@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+
 /**
  * @title IRevenueModuleV2
  * @notice Interface for the revenue module managing investment, refunds, and reward distribution.
@@ -96,4 +98,8 @@ interface IRevenueModuleV2 {
   function saleFinalized() external view returns (bool);
 
   function isStakeholder(address user) external view returns (bool);
+
+  function projectFunds() external view returns (uint256);
+
+  function settlementToken() external view returns (IERC20);
 }

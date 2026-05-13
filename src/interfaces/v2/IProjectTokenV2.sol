@@ -44,6 +44,8 @@ interface IProjectTokenV2 {
 
   function enableTransfers() external;
 
+  function delegate(address delegatee) external;
+
   function setRevenueModule(address module) external;
 
   function maxSupply() external view returns (uint256);

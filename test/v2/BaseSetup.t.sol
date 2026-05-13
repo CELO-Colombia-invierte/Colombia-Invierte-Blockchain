@@ -15,8 +15,10 @@ import {NatilleraV2} from '../../src/contracts/v2/natillera/NatilleraV2.sol';
 import {ProjectTokenV2} from '../../src/contracts/v2/tokenization/ProjectTokenV2.sol';
 import {RevenueModuleV2} from '../../src/contracts/v2/tokenization/RevenueModuleV2.sol';
 import {IGovernanceModule} from '../../src/interfaces/v2/IGovernanceModule.sol';
+import {IMilestonesModule} from '../../src/interfaces/v2/IMilestonesModule.sol';
 import {INatilleraV2} from '../../src/interfaces/v2/INatilleraV2.sol';
 import {IProjectVault} from '../../src/interfaces/v2/IProjectVault.sol';
+import {IRevenueModuleV2} from '../../src/interfaces/v2/IRevenueModuleV2.sol';
 
 /**
  * @title BaseSetup
